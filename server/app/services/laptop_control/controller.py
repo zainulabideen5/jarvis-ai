@@ -12,9 +12,7 @@ from app.services.laptop_control.files import FileOperations
 from app.services.laptop_control.intent import IntentDetector
 from app.services.laptop_control.security import SecurityBlocker
 from app.services.laptop_control.system import SystemCommands
-from app.services.laptop_control.teams import TeamsAutomation
 from app.services.laptop_control.vision import VisionDriver
-from app.services.laptop_control.whatsapp import WhatsAppAutomation
 
 log = get_logger(__name__)
 
@@ -22,17 +20,25 @@ log = get_logger(__name__)
 # These actions run DIRECTLY (no confirmation)
 DIRECT_ACTIONS = {
     "open_app", "close_app", "find_file", "open_file", "open_folder", "read_file",
-    "focus_window", "edit_excel", "screenshot", "send_teams_message",
-    "send_whatsapp_message", "system_command", "chat",
+    "focus_window", "edit_excel", "screenshot",
+    "system_command", "chat",
     "create_folder", "create_file",
     "open_url", "web_search",
     "send_email",
-    "trello_create_card", "trello_move_card", "trello_comment", "trello_list",
 }
 
 # These actions require EXPLICIT confirmation (destructive only)
 CONFIRM_ACTIONS = {
     "delete_file", "move_file",
+}
+
+# Per-app scraper actions removed in the universal-engine repivot.
+# The new UIA-based universal engine will handle these generically.
+REMOVED_ACTIONS = {
+    "send_whatsapp_message", "send_teams_message",
+    "trello_create_card", "trello_move_card", "trello_comment", "trello_list",
+    "gmail_detect_accounts", "gmail_set_label", "gmail_list_accounts",
+    "gmail_send_labeled",
 }
 
 DESTRUCTIVE_SYSTEM = {"shutdown", "restart", "wifi_off"}
@@ -60,35 +66,11 @@ class LaptopController:
         if action_type in CONFIRM_ACTIONS:
             # Send actions: skip confirmation if recipient is already approved
             from app.services.approved_recipients import ApprovedRecipients
-            if action_type == "send_whatsapp_message":
-                if ApprovedRecipients.is_approved("whatsapp", params.get("recipient")):
-                    return False
-            elif action_type == "send_teams_message":
-                if ApprovedRecipients.is_approved("teams", params.get("recipient")):
-                    return False
-            elif action_type == "send_email":
+            if action_type == "send_email":
                 to = params.get("to") or params.get("recipient")
                 # For email, "to" can be a list; check whichever the first key is
                 primary = to if isinstance(to, str) else (to[0] if isinstance(to, list) and to else None)
                 if primary and ApprovedRecipients.is_approved("email", primary):
-                    return False
-            elif action_type == "trello_create_card":
-                # Trello lists are static — approve a list once, then create freely
-                lst = params.get("list") or params.get("list_name") or "default"
-                if ApprovedRecipients.is_approved("trello_list", lst):
-                    return False
-            elif action_type == "trello_move_card":
-                # Approve per (card, target list) pair — narrower than the
-                # general list approval, so a slip-up still gets a prompt.
-                card = params.get("card") or params.get("title") or ""
-                target = params.get("to_list") or params.get("list") or ""
-                if card and target:
-                    pair = f"{card}->{target}"
-                    if ApprovedRecipients.is_approved("trello_move", pair):
-                        return False
-            elif action_type == "trello_comment":
-                card = params.get("card") or params.get("title") or ""
-                if card and ApprovedRecipients.is_approved("trello_comment", card):
                     return False
             return True
 
@@ -170,6 +152,12 @@ class LaptopController:
     def _dispatch(self, action_type: str, params: dict) -> tuple[bool, str]:
         """Dispatch to the right module (sync — runs in thread)."""
         try:
+            if action_type in REMOVED_ACTIONS:
+                return False, (
+                    "Yeh feature naye universal engine mein rebuild ho raha hai — "
+                    "purane per-app drivers hata diye gaye hain."
+                )
+
             if action_type == "open_app":
                 return AppController.open_app(params.get("app", ""))
 
@@ -243,30 +231,6 @@ class LaptopController:
                     kind=params.get("kind", "auto"),
                 )
 
-            if action_type == "send_teams_message":
-                recipient = (params.get("recipient") or "").strip()
-                message = (params.get("message") or "").strip()
-                attachment = (params.get("attachment") or "").strip() or None
-                if not recipient:
-                    return False, "Bhai recipient ka naam to bata — kis ko message bhejna hai?"
-                if not message and not attachment:
-                    return False, f"{recipient} ko kya bhejna hai? Text ya file dena hoga."
-                return TeamsAutomation.send_message(recipient, message, attachment=attachment)
-
-            if action_type == "send_whatsapp_message":
-                recipient = (params.get("recipient") or "").strip()
-                message = (params.get("message") or "").strip()
-                attachment = (params.get("attachment") or "").strip() or None
-                prefer_business = bool(params.get("business") or params.get("prefer_business") or False)
-                # behind_mode: True → off-screen positioning (user sees only JARVIS dashboard)
-                behind_param = params.get("behind_mode")
-                behind_mode = behind_param if isinstance(behind_param, bool) else None
-                if not recipient:
-                    return False, "Bhai recipient ka naam ya number to bata"
-                if not message and not attachment:
-                    return False, f"{recipient} ko kya WhatsApp pe bhejna hai? Text ya file dena hoga."
-                return WhatsAppAutomation.send_message(recipient, message, attachment=attachment, prefer_business=prefer_business, behind_mode=behind_mode)
-
             if action_type == "screenshot":
                 return self._vision.analyze(params.get("query", ""))
 
@@ -278,121 +242,11 @@ class LaptopController:
                 subject = (params.get("subject") or "").strip() or "(no subject)"
                 body = params.get("body") or params.get("message") or ""
                 attachments = params.get("attachments") or params.get("attachment") or None
-                from_account = params.get("from") or params.get("from_account") or params.get("account")
                 if not to:
                     return False, "Email kis ko bhejna hai? Recipient (to) dena hoga."
 
-                # Extension route — supports text + attachments. Encodes each
-                # file to base64 and ships through the extension which builds
-                # real File objects and uploads to Gmail compose.
-                from app.services.extension_bridge import ExtensionBridge
-                bridge = ExtensionBridge.get()
-                if bridge.is_connected():
-                    ext_params = {
-                        "to": to,
-                        "subject": subject,
-                        "body": body,
-                        "from_account": from_account,
-                    }
-                    ext_timeout = 90
-                    # Gmail supports multiple attachments — but extension
-                    # currently only handles one. Take the first/main one.
-                    first_attach = None
-                    if attachments:
-                        if isinstance(attachments, list) and attachments:
-                            first_attach = attachments[0]
-                        elif isinstance(attachments, str):
-                            first_attach = attachments
-                    if first_attach:
-                        # Resolve bare filename via the existing resolver
-                        # (WhatsAppAutomation is already imported at module top)
-                        ok, resolved = WhatsAppAutomation._resolve_file_path(first_attach)
-                        if not ok:
-                            return False, resolved
-                        import base64, mimetypes, os
-                        try:
-                            size = os.path.getsize(resolved)
-                        except OSError as e:
-                            return False, f"Attachment read fail: {e}"
-                        MAX_BYTES = 25 * 1024 * 1024  # Gmail's hard limit
-                        if size > MAX_BYTES:
-                            return False, f"File bohot bara ({size//1024//1024} MB) — Gmail max 25 MB."
-                        with open(resolved, "rb") as f:
-                            ext_params["attachment_b64"] = base64.b64encode(f.read()).decode("ascii")
-                        ext_params["attachment_name"] = os.path.basename(resolved)
-                        ext_params["attachment_mime"] = (
-                            mimetypes.guess_type(resolved)[0] or "application/octet-stream"
-                        )
-                        ext_timeout = max(120, int(size / (200 * 1024)) + 60)
-                    try:
-                        bridge.send_command_sync("gmail_send", ext_params, timeout=ext_timeout)
-                        kind = " + attachment" if first_attach else ""
-                        return True, f"Email bhej diya {to} ko{kind} (via extension — regular Chrome)"
-                    except Exception as e:
-                        log.warning("ext_gmail_failed_no_cdp_fallback", error=str(e))
-                        return False, (
-                            f"Extension se Gmail send fail: {e}\n"
-                            f"Regular Chrome mein Gmail tab khol ke login confirm karo, phir retry."
-                        )
-
-                # Next: Chrome CDP (uses logged-in Gmail accounts in JARVIS
-                # Chrome — no SMTP app-password setup needed). Falls back to
-                # SMTP only if CDP isn't running OR send fails AND Gmail
-                # credentials are configured.
-                from app.services.laptop_control import chrome_cdp
-                if chrome_cdp.is_debug_running():
-                    from app.services.laptop_control.gmail_cdp import GmailCDP
-                    ok, msg = GmailCDP.send(
-                        to=to, subject=subject, body=body,
-                        attachments=attachments, from_account=from_account,
-                    )
-                    if ok:
-                        return True, msg
-                    # If CDP attempted and failed in a specific way (e.g. not
-                    # logged in to that account), surface the error directly
-                    # instead of silently falling to SMTP (which uses a different
-                    # account anyway, surprising the user).
-                    log.warning("gmail_cdp_failed", error=msg)
-                    # Fall through to SMTP only if explicitly configured
-                    try:
-                        from app.core.config import ServerConfig
-                        cfg = ServerConfig()
-                        smtp_ready = bool(cfg.gmail_address) and bool(cfg.gmail_app_password)
-                    except Exception:
-                        smtp_ready = False
-                    if not smtp_ready:
-                        return False, msg
-
                 from app.services.laptop_control.email_sender import EmailSender
                 return EmailSender.send(to=to, subject=subject, body=body, attachments=attachments)
-
-            if action_type == "trello_create_card":
-                from app.services.laptop_control.trello import TrelloDriver
-                return TrelloDriver.create_card(
-                    title=params.get("title", "") or params.get("name", ""),
-                    list_name=params.get("list") or params.get("list_name"),
-                    board_name=params.get("board") or params.get("board_name"),
-                )
-
-            if action_type == "trello_move_card":
-                from app.services.laptop_control.trello import TrelloDriver
-                return TrelloDriver.move_card(
-                    card_query=params.get("card", "") or params.get("title", ""),
-                    to_list=params.get("to_list", "") or params.get("list", ""),
-                )
-
-            if action_type == "trello_comment":
-                from app.services.laptop_control.trello import TrelloDriver
-                return TrelloDriver.add_comment(
-                    card_query=params.get("card", "") or params.get("title", ""),
-                    comment=params.get("comment", "") or params.get("text", ""),
-                )
-
-            if action_type == "trello_list":
-                from app.services.laptop_control.trello import TrelloDriver
-                return TrelloDriver.list_cards(
-                    list_filter=params.get("list") or params.get("filter"),
-                )
 
             if action_type == "open_url":
                 return AppController.open_url(params.get("url", ""))
@@ -494,52 +348,6 @@ class LaptopController:
                         lines.append(f"  • {a.get('smtp') or a.get('display_name')}")
                     return True, "\n".join(lines)
                 return False, r.get("error", "Account list fail")
-
-            # --- Multi-Gmail label management via chat ---
-            if action_type == "gmail_detect_accounts":
-                from app.services.laptop_control.multi_account import GmailMultiAccount
-                r = GmailMultiAccount.get().detect_accounts_sync(14, 180.0)
-                if r.get("ok"):
-                    accounts = r.get("accounts", [])
-                    return True, f"{len(accounts)} Gmail accounts detected. Ab labels assign kar: 'Account 0 ko Personal label do'"
-                return False, r.get("error", "Gmail detect fail")
-
-            if action_type == "gmail_set_label":
-                from app.services.laptop_control.gmail_chrome_native import GmailChromeNative
-                idx = params.get("index")
-                label = params.get("label", "")
-                if idx is None or not label:
-                    return False, "Index aur label dono chahiye"
-                r = GmailChromeNative.get().set_label(int(idx), label, params.get("email", ""))
-                if r.get("ok"):
-                    return True, f"Account u/{idx} → '{label}' label assign ho gaya"
-                return False, "Label assign fail"
-
-            if action_type == "gmail_list_accounts":
-                from app.services.laptop_control.gmail_chrome_native import GmailChromeNative
-                accs = GmailChromeNative.get().list_labeled_accounts()
-                if not accs:
-                    return True, "Koi Gmail label set nahi. Pehle 'Gmail accounts detect karo' bolo, phir labels assign kar."
-                lines = [f"  u/{a.get('index')}: {a.get('label') or '(no label)'} — {a.get('email','')}" for a in accs]
-                return True, "Gmail accounts:\n" + "\n".join(lines)
-
-            # --- Multi-Gmail (account-labelled send) — NATIVE Chrome ---
-            # User explicitly asked for normal Chrome control (NOT Playwright
-            # background). Uses gmail_chrome_native which launches Chrome at
-            # mail.google.com/mail/u/<index>/ + UIA-driven compose.
-            if action_type == "gmail_send_labeled":
-                from app.services.laptop_control.gmail_chrome_native import GmailChromeNative
-                r = GmailChromeNative.get().send_email_sync(
-                    params.get("label", ""),
-                    params.get("to", ""),
-                    params.get("subject", ""),
-                    params.get("body", ""),
-                    params.get("attachment", ""),
-                    150.0,
-                )
-                if r.get("ok"):
-                    return True, f"'{params.get('label')}' Gmail se bhej diya (Chrome native)"
-                return False, r.get("error", "Labeled Gmail send fail")
 
             # --- Native Windows app drivers ---
             if action_type == "notepad_save":

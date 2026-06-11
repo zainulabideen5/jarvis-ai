@@ -252,35 +252,29 @@ class VerificationService:
         # Build the message
         message = self._build_message(title, desc, priority)
 
-        # Look up recipient based on client
-        from app.services.laptop_control.whatsapp import WhatsAppAutomation, _normalize_phone
-        from app.services.laptop_control.teams import TeamsAutomation
-        import asyncio
-
         send_status = "failed"
         send_msg = ""
 
         try:
-            if platform == "whatsapp":
-                phone = _normalize_phone(client) or WhatsAppAutomation._lookup_contact(client)
-                if not phone:
-                    send_msg = f"WhatsApp number nahi mila for '{client}'. Pehle Clients page mein add kar."
+            if platform in ("whatsapp", "teams"):
+                # Per-app scrapers removed in the universal-engine repivot;
+                # sends will route through the new UIA-based engine.
+                send_msg = (
+                    f"{platform.title()} send naye universal engine mein rebuild ho raha hai — "
+                    "abhi yeh message manually bhejna hoga."
+                )
+
+            elif platform == "email":
+                if "@" not in client:
+                    send_msg = f"'{client}' ka email address nahi mila — Clients page mein add karo."
                 else:
+                    from app.services.laptop_control.email_sender import EmailSender
+                    import asyncio
                     ok, m = await asyncio.to_thread(
-                        WhatsAppAutomation.send_message, client, message
+                        EmailSender.send, client, f"Task: {title}", message
                     )
                     send_status = "sent" if ok else "failed"
                     send_msg = m
-
-            elif platform == "teams":
-                ok, m = await asyncio.to_thread(
-                    TeamsAutomation.send_message, client, message
-                )
-                send_status = "sent" if ok else "failed"
-                send_msg = m
-
-            elif platform == "email":
-                send_msg = "Email feature abhi pending hai — WhatsApp ya Teams use kar."
 
         except Exception as e:
             send_msg = f"Send failed: {e}"

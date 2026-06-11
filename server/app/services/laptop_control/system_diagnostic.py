@@ -51,11 +51,9 @@ class SystemDiagnostic:
         layers.append(self._layer_python_deps())
         layers.append(self._layer_native_infra())
         layers.append(self._layer_office_com())
-        layers.append(self._layer_multi_gmail())
         layers.append(self._layer_win_uia())
         layers.append(self._layer_image_match())
         layers.append(self._layer_server_routes())
-        layers.append(self._layer_wa_playwright())
         layers.append(self._layer_system_env())
         layers.append(self._layer_llm_keys())
 
@@ -85,7 +83,6 @@ class SystemDiagnostic:
         """Layer 0: Python + key dependencies installed."""
         deps = {}
         for name, mod in (
-            ("playwright", "playwright"),
             ("pyautogui", "pyautogui"),
             ("pywinauto", "pywinauto"),
             ("cv2", "cv2"),
@@ -155,28 +152,6 @@ class SystemDiagnostic:
         except Exception as e:
             return {"layer": "2-office-com", "name": "Office COM", "status": "fail", "error": str(e)[:200]}
 
-    def _layer_multi_gmail(self) -> dict:
-        """Layer 3: Multi-Gmail config readable + labels."""
-        try:
-            from app.services.laptop_control.multi_account import GmailMultiAccount
-            accounts = GmailMultiAccount.get().list_labeled_accounts_sync()
-            labeled = sum(1 for a in accounts if a.get("label"))
-            return {
-                "layer": "3-multi-gmail",
-                "name": "Multi-Gmail account routing",
-                "status": "ok" if accounts else "partial",
-                "details": {
-                    "detected_accounts": len(accounts),
-                    "labeled_accounts": labeled,
-                },
-                "fix_hint": (
-                    "" if accounts else
-                    "Open dashboard → Multi-Gmail section → click 'Detect Accounts'"
-                ),
-            }
-        except Exception as e:
-            return {"layer": "3-multi-gmail", "name": "Multi-Gmail", "status": "fail", "error": str(e)[:200]}
-
     def _layer_win_uia(self) -> dict:
         """Layer 4: pywinauto can enumerate windows."""
         try:
@@ -231,11 +206,8 @@ class SystemDiagnostic:
                 "/api/chat",
                 "/api/native/screen-info",
                 "/api/office/check",
-                "/api/accounts/gmail/list",
                 "/api/winapps/calculator",
                 "/api/imgmatch/templates",
-                "/api/whatsapp/status",
-                "/api/universal/learned-sites",
             ]
             missing = [p for p in required if p not in paths]
             return {
@@ -250,44 +222,6 @@ class SystemDiagnostic:
             }
         except Exception as e:
             return {"layer": "6-server-routes", "name": "Server routes", "status": "fail", "error": str(e)[:200]}
-
-    def _layer_wa_playwright(self) -> dict:
-        """Layer 7: WhatsApp Playwright session + browser ability.
-
-        READ-ONLY — never launches the browser. We only check whether
-        cookies exist on disk and whether the singleton is already
-        instantiated (alive). Diagnostic should NOT have side effects
-        like spawning Chromium when the user just runs a health check.
-        """
-        try:
-            from app.services.laptop_control.wa_playwright import WhatsAppPlaywright
-            session = WhatsAppPlaywright.session_exists()
-            # Check singleton state WITHOUT instantiating if not already done
-            existing_inst = getattr(WhatsAppPlaywright, "_instance", None)
-            background = bool(existing_inst and existing_inst.is_background_alive()) if existing_inst else False
-            # Check Chromium binary present
-            from pathlib import Path
-            home = Path.home()
-            playwright_dirs = list((home / "AppData" / "Local" / "ms-playwright").glob("chromium-*")) if (home / "AppData" / "Local" / "ms-playwright").exists() else []
-            chromium_present = len(playwright_dirs) > 0
-            status = "ok" if (session and chromium_present) else ("partial" if chromium_present else "fail")
-            return {
-                "layer": "7-wa-playwright",
-                "name": "WhatsApp Web (Playwright)",
-                "status": status,
-                "details": {
-                    "wa_session_exists": session,
-                    "background_browser_alive": background,
-                    "chromium_binary_installed": chromium_present,
-                },
-                "fix_hint": (
-                    "" if status == "ok" else
-                    ("Run: cd server && venv/Scripts/python -m playwright install chromium" if not chromium_present else
-                     "Open dashboard → Workspace → Connect (QR scan)")
-                ),
-            }
-        except Exception as e:
-            return {"layer": "7-wa-playwright", "name": "WA Playwright", "status": "fail", "error": str(e)[:200]}
 
     def _layer_system_env(self) -> dict:
         """Layer 8: disk space + permissions + server data dir."""

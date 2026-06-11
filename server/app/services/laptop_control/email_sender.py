@@ -62,7 +62,7 @@ class EmailSender:
         from_addr / password: override sender (defaults to .env config).
 
         Send chain (in priority order):
-          1. Playwright Gmail tab (same browser as WA/Teams) — if set up
+          1. Outlook COM (silent, zero setup — uses local Outlook profile)
           2. SMTP fallback — uses Gmail app password
         """
         if not subject:
@@ -88,15 +88,11 @@ class EmailSender:
                 # Attachments
                 att_list = []
                 if attachments:
-                    try:
-                        from app.services.laptop_control.whatsapp import WhatsAppAutomation
-                        atts_in = attachments if isinstance(attachments, list) else _split_recipients(attachments)
-                        for a in atts_in:
-                            ok_a, resolved_a = WhatsAppAutomation._resolve_file_path(a)
-                            if ok_a:
-                                att_list.append(resolved_a)
-                    except Exception:
-                        pass
+                    atts_in = attachments if isinstance(attachments, list) else _split_recipients(attachments)
+                    for a in atts_in:
+                        ok_a, resolved_a = EmailSender._resolve_file_path(a)
+                        if ok_a:
+                            att_list.append(resolved_a)
                 r_oc = OfficeCOM.get().outlook_send_email(
                     to=oc_emails,
                     subject=subject,
@@ -108,110 +104,6 @@ class EmailSender:
                 log.info("outlook_com_failed_fallback", error=r_oc.get("error", ""))
         except Exception as e:
             log.info("outlook_com_init_fallback", error=str(e)[:200])
-
-        # ===== Native Chrome Gmail (foreground — user's real Chrome) =====
-        # If Outlook not available, try the user's regular Chrome with Gmail.
-        # Uses default account (u/0). Foreground — window briefly visible.
-        try:
-            from app.services.laptop_control.gmail_chrome_native import GmailChromeNative
-            raw_cn_to = _split_recipients(to)
-            cn_emails = []
-            for r in raw_cn_to:
-                if _looks_like_email(r):
-                    cn_emails.append(r)
-                else:
-                    em = EmailSender._lookup_email_by_name(r)
-                    if em:
-                        cn_emails.append(em)
-            if cn_emails:
-                inst_g = GmailChromeNative.get()
-                labels = inst_g.list_labeled_accounts()
-                # Use first labeled account if present, else fall back to
-                # a virtual "u/0" send. We do NOT persist a fake "Default"
-                # label to chrome_accounts.json — that polluted the user's
-                # label list with an auto-created entry.
-                first_labeled = next((a for a in labels if a.get("label") and a.get("index") == 0), None)
-                if first_labeled:
-                    target_label = first_labeled["label"]
-                else:
-                    # Send via account index 0 directly (no label, no persist).
-                    # We monkey-patch a temp lookup via the index-based open.
-                    target_label = "__index0__"
-                if target_label == "__index0__":
-                    # Internal direct-index send — bypass resolve_label
-                    r_cn = inst_g._send_via_index_internal(
-                        idx=0,
-                        to=", ".join(cn_emails),
-                        subject=subject,
-                        body=body,
-                        attachment_path="",
-                    ) if hasattr(inst_g, "_send_via_index_internal") else inst_g.send_email_sync(
-                        label="",  # will fail with friendly error
-                        to=", ".join(cn_emails),
-                        subject=subject,
-                        body=body,
-                        attachment_path="",
-                    )
-                else:
-                    r_cn = inst_g.send_email_sync(
-                        label=target_label,
-                        to=", ".join(cn_emails),
-                        subject=subject,
-                        body=body,
-                        attachment_path="",
-                    )
-                if r_cn.get("ok"):
-                    return True, f"Email bhej diya {', '.join(cn_emails)} ko (Chrome native, default Gmail)"
-                log.info("gmail_chrome_native_failed_fallback", error=r_cn.get("error", ""))
-        except Exception as e:
-            log.info("gmail_chrome_native_init_fallback", error=str(e)[:200])
-
-        # ===== Playwright Gmail (FALLBACK) — same shared browser, no SMTP creds needed =====
-        # Only attempt if a single recipient (Gmail browser compose is one-recipient
-        # oriented; multi-recipient still goes via SMTP for now).
-        try:
-            from app.services.laptop_control.wa_playwright import WhatsAppPlaywright
-            inst = WhatsAppPlaywright.get()
-            # Both signals required: browser running AND Gmail actually logged in.
-            # Earlier `or` made every email attempt Playwright (even on cold/no-login
-            # state), wasting time before SMTP fallback.
-            if inst.is_background_alive() and WhatsAppPlaywright.gmail_session_exists():
-                # Normalize recipients into a single comma-separated string for the To: line
-                raw_pw_to = _split_recipients(to)
-                pw_to_emails = []
-                for r in raw_pw_to:
-                    if _looks_like_email(r):
-                        pw_to_emails.append(r)
-                    else:
-                        em = EmailSender._lookup_email_by_name(r)
-                        if em:
-                            pw_to_emails.append(em)
-                if pw_to_emails:
-                    # Resolve first attachment (Gmail compose supports multiple but we keep it simple)
-                    attach_path = ""
-                    try:
-                        if attachments:
-                            from app.services.laptop_control.whatsapp import WhatsAppAutomation
-                            atts_list = attachments if isinstance(attachments, list) else _split_recipients(attachments)
-                            if atts_list:
-                                ok_a, resolved_a = WhatsAppAutomation._resolve_file_path(atts_list[0])
-                                if ok_a:
-                                    attach_path = resolved_a
-                    except Exception:
-                        pass
-
-                    ok_pw, msg_pw = inst.gmail_send_email_sync(
-                        to=", ".join(pw_to_emails),
-                        subject=subject,
-                        body=body,
-                        attachment_path=attach_path,
-                        timeout_sec=120,
-                    )
-                    if ok_pw:
-                        return True, f"Email bhej diya {', '.join(pw_to_emails)} ko (via Gmail browser). {msg_pw}"
-                    log.info("gmail_playwright_failed_fallback_smtp", error=msg_pw)
-        except Exception as e:
-            log.info("gmail_playwright_init_fallback", error=str(e)[:200])
 
         # Resolve sender credentials
         if not from_addr or not password:
@@ -393,6 +285,19 @@ class EmailSender:
 
     @staticmethod
     def _resolve_file_path(name_or_path: str) -> tuple[bool, str]:
-        """Same as WhatsAppAutomation._resolve_file_path — resolves bare filenames via find_files."""
-        from app.services.laptop_control.whatsapp import WhatsAppAutomation
-        return WhatsAppAutomation._resolve_file_path(name_or_path)
+        """Resolve a bare filename to a full path via FileOperations.find_files."""
+        raw = (name_or_path or "").strip().strip('"').strip("'")
+        if not raw:
+            return False, "file name khali hai"
+        p = Path(os.path.expandvars(os.path.expanduser(raw)))
+        if p.exists() and p.is_file():
+            return True, str(p)
+        try:
+            from app.services.laptop_control.files import FileOperations
+            results = FileOperations.find_files(raw)
+            for r in results or []:
+                if not r.get("is_folder"):
+                    return True, r["path"]
+        except Exception as e:
+            return False, f"file search fail: {e}"
+        return False, "file nahi mili"
