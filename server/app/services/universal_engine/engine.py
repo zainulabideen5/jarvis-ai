@@ -57,8 +57,12 @@ PLAYBOOK — chat app (Teams/WhatsApp/Slack) mein message bhejna. EFFICIENT raho
 yeh 5-6 step mein ho jaana chahiye. Fazool steps mat lo. (Naam misaal hain;
 asli naam jo user ne diya aur jo ui_tree mein dikhe wohi use karo.)
 
-1. list_windows ya ek ui_tree se window dhoondo. Agar app PEHLE SE khula hai to
-   open_app MAT karo (waqt zaaya). Window khula nahi to hi open_app + wait 2s.
+1. App ki window dhoondo: list_windows chalao. Agar app us list mein dikhe to
+   uska EXACT title use karo. Agar list mein na bhi dikhe, GIVE UP MAT KARO —
+   seedhe ui_tree {{"window_title":"<app ka naam, e.g. Teams>"}} try karo; window
+   aksar khuli hoti hai chahe list mein na aaye. Sirf jab ui_tree bhi "window
+   nahi mili" kahe TAB open_app + wait 2s. (User keh chuka app khula hai to
+   uspe yaqeen karo — pehle ui_tree se dhoondo, user se mat poocho.)
 2. ui_tree BINA filter (sirf window_title). Ek hi dafa — poori window dekho.
    NOTE: contact aksar [TreeItem]/[ListItem] "Chat <NAAM> Available"; message box
    aksar [Edit]/[Document] "Type a message"/"Type a new message"; search [ComboBox].

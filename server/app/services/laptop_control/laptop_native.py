@@ -183,22 +183,47 @@ class LaptopNative:
     # ==================================================================
 
     def list_open_windows(self) -> dict:
-        """List all visible top-level windows (title + process info)."""
+        """List open top-level windows by title.
+
+        Uses UIA (pywinauto Desktop) as the PRIMARY source — it reliably sees
+        modern apps (Teams, WhatsApp, new Notepad) that the Win32 pygetwindow
+        enumeration silently misses. Falls back to / merges pygetwindow so we
+        never lose classic windows either. Consistency matters: whatever shows
+        up here, ui_tree/focus can also open.
+        """
+        titles: list[str] = []
+        seen: set[str] = set()
+
+        # PRIMARY: UIA top-level windows (same backend as ui_tree)
+        try:
+            from pywinauto import Desktop
+            for w in Desktop(backend="uia").windows():
+                try:
+                    t = (w.window_text() or "").strip()
+                    if t and t.lower() not in seen:
+                        seen.add(t.lower())
+                        titles.append(t)
+                except Exception:
+                    continue
+        except Exception as e:
+            log.debug("uia_window_list_failed", error=str(e))
+
+        # SUPPLEMENT: pygetwindow (classic Win32) for anything UIA missed
         try:
             import pygetwindow as gw
-            wins = []
             for w in gw.getAllWindows():
-                if w.title and not w.isMinimized:
-                    wins.append({
-                        "title": w.title,
-                        "left": w.left,
-                        "top": w.top,
-                        "width": w.width,
-                        "height": w.height,
-                    })
-            return {"ok": True, "windows": wins, "count": len(wins)}
-        except Exception as e:
-            return {"ok": False, "error": str(e)[:200]}
+                t = (w.title or "").strip()
+                if t and not w.isMinimized and t.lower() not in seen:
+                    seen.add(t.lower())
+                    titles.append(t)
+        except Exception:
+            pass
+
+        return {
+            "ok": True,
+            "count": len(titles),
+            "windows": [{"title": t} for t in titles],
+        }
 
     def focus_window(self, title_substring: str) -> dict:
         """Bring a window to foreground by partial title match."""
