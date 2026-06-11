@@ -823,7 +823,7 @@ async def engine_status():
     """Is the universal engine ready (Claude CLI brain available)?"""
     from app.services.universal_engine.brain import get_brain
     brain = get_brain()
-    return {"brain": "claude-cli", "available": brain.is_available()}
+    return {"brain": type(brain).__name__, "available": brain.is_available()}
 
 
 @router.post("/engine/run")

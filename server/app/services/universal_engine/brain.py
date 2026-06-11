@@ -114,12 +114,53 @@ class ClaudeCLIBrain:
         return "\n".join(parts)
 
 
-_brain: ClaudeCLIBrain | None = None
+class LLMBrain:
+    """Brain backed by the server's existing fast LLM stack (Groq → Cerebras
+    → OpenRouter → Gemini fallback). Default brain: NO new API key needed,
+    and ~10x faster per step than the Claude CLI (sub-second vs 15-20s), which
+    is what makes the engine actually usable interactively.
+    """
+
+    def __init__(self) -> None:
+        from app.core.config import ServerConfig
+        from app.core.llm import LLMClient
+        self._config = ServerConfig()
+        self._client = LLMClient(self._config)
+
+    def is_available(self) -> bool:
+        # Available if any provider key is configured.
+        return bool(
+            self._config.groq_api_keys or self._config.cerebras_api_keys
+            or self._config.openrouter_api_keys or self._config.gemini_api_keys
+        )
+
+    def think(self, system: str, transcript: list[dict]) -> str:
+        messages = [{"role": "system", "content": system}, *transcript]
+        resp = self._client.chat.completions.create(
+            model=self._config.groq_model,
+            messages=messages,
+            temperature=0.2,   # planning — keep it deterministic
+            max_tokens=900,
+            timeout=40,
+        )
+        text = (resp.choices[0].message.content or "").strip()
+        if not text:
+            raise BrainError("LLM ne khali jawab diya")
+        return text
 
 
-def get_brain() -> ClaudeCLIBrain:
-    """Singleton brain. Swap implementation here when moving to the API."""
+_brain = None
+
+
+def get_brain():
+    """Singleton brain.
+
+    Default = LLMBrain (fast Groq stack, already configured). Falls back to the
+    Claude CLI only if no LLM keys are set. To force the API/CLI later, swap
+    the instance created here — nothing else in the engine changes.
+    """
     global _brain
     if _brain is None:
-        _brain = ClaudeCLIBrain()
+        llm = LLMBrain()
+        _brain = llm if llm.is_available() else ClaudeCLIBrain()
     return _brain
