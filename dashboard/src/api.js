@@ -105,7 +105,7 @@ export const api = {
   getChatHistory: () => fetchJSON('/chat/history'),
   // Upload a file the user attached in the dashboard chat. Returns
   // `{ path, filename, size }`. The `path` is server-side; pass it back via
-  // sendChat(..., attachments: [path]) so send_whatsapp/teams/email can pick it up.
+  // sendChat(..., attachments: [path]) so the engine/email can pick it up.
   uploadChatFile: async (file) => {
     const fd = new FormData();
     fd.append('file', file);
@@ -128,20 +128,9 @@ export const api = {
   grantConsent: () => postJSON('/consent/grant', { user_agent: navigator.userAgent }),
   revokeConsent: () => postJSON('/consent/revoke', {}),
 
-  // Chrome background mode
-  getChromeStatus: () => fetchJSON('/chrome/status'),
-  enableChromeBackground: () => postJSON('/chrome/enable-background', {}),
-
-  // Multi-Gmail (14+ accounts)
-  gmailDetectAccounts: () => postJSON('/accounts/gmail/detect', { max_probe: 14 }),
-  gmailListAccounts: () => fetchJSON('/accounts/gmail/list'),
-  gmailSetLabel: (index, label, email = '') =>
-    postJSON('/accounts/gmail/label', { index, label, email }),
-  gmailRemoveLabel: (index) => postJSON('/accounts/gmail/remove', { index }),
-  gmailOpenAccount: (labelOrIndex) =>
-    postJSON('/accounts/gmail/open',
-      typeof labelOrIndex === 'string' ? { label: labelOrIndex } : { index: labelOrIndex }),
-  gmailSendLabeled: (payload) => postJSON('/accounts/gmail/send', payload),
+  // Universal engine (UIA + keyboard + PowerShell, Claude CLI brain)
+  engineStatus: () => fetchJSON('/engine/status'),
+  engineRun: (task) => postJSON('/engine/run', { task }),
 
   // Office COM check
   officeCheck: () => fetchJSON('/office/check'),
@@ -153,86 +142,6 @@ export const api = {
   // Image-match templates
   imgmatchTemplates: () => fetchJSON('/imgmatch/templates'),
   imgmatchDelete: (key) => postJSON('/imgmatch/delete', { key }),
-
-  // Universal browser — ANY site via heuristics/ARIA/recorded macros
-  universalOpen: (url) => postJSON('/universal/open', { url }),
-  universalSend: (payload) => postJSON('/universal/send', payload),
-  universalTeachStart: (url) => postJSON('/universal/teach/start', { url }),
-  universalTeachStop: (site_key, label = 'send') =>
-    postJSON('/universal/teach/stop', { site_key, label }),
-  universalLearnedSites: () => fetchJSON('/universal/learned-sites'),
-
-  // Unified workspace — ONE browser with WA + Teams (+ future Gmail/Trello)
-  getWorkspaceStatus: () => fetchJSON('/workspace/status'),
-  openWorkspace: async () => {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 210000);
-    try {
-      const res = await fetch(`${BASE}/workspace/open`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}',
-        signal: ctrl.signal,
-      });
-      if (!res.ok) throw await readError(res);
-      return res.json();
-    } catch (err) {
-      if (err.name === 'AbortError') throw new Error('Workspace open timeout — dobara try kar');
-      throw err;
-    } finally {
-      clearTimeout(t);
-    }
-  },
-
-  // Teams Playwright (same browser as WA)
-  getTeamsStatus: () => fetchJSON('/teams/status'),
-  setupTeams: async () => {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 210000);
-    try {
-      const res = await fetch(`${BASE}/teams/setup`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}',
-        signal: ctrl.signal,
-      });
-      if (!res.ok) throw await readError(res);
-      return res.json();
-    } catch (err) {
-      if (err.name === 'AbortError') throw new Error('Teams setup timeout — dobara try kar');
-      throw err;
-    } finally {
-      clearTimeout(t);
-    }
-  },
-
-  // WhatsApp Playwright (headless background sender)
-  getWhatsAppStatus: () => fetchJSON('/whatsapp/status'),
-  // Setup has a long server-side wait (up to 3 min for QR scan), so we
-  // give the fetch a 210-second client timeout — long enough to cover
-  // the 180s scan window + buffer, but bounded so a server crash doesn't
-  // leave the button stuck "Connecting..." forever.
-  setupWhatsApp: async () => {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 210000);
-    try {
-      const res = await fetch(`${BASE}/whatsapp/setup`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}',
-        signal: ctrl.signal,
-      });
-      if (!res.ok) throw await readError(res);
-      return res.json();
-    } catch (err) {
-      if (err.name === 'AbortError') {
-        throw new Error('Setup timeout — server response nahi aaya, dobara try kar');
-      }
-      throw err;
-    } finally {
-      clearTimeout(t);
-    }
-  },
 
   // Calendar
   getEvents: () => fetchJSON('/calendar'),

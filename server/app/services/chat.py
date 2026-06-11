@@ -935,7 +935,7 @@ class ChatService:
             if pending is not None:
                 if is_yes:
                     self._remember_approved_recipient(pending)
-                    result = await self._laptop.execute(pending)
+                    result = await self._execute_pending(pending)
                     return {
                         "reply": f"✅ {result.get('message', 'Done')}",
                         "actions": [result],
@@ -957,7 +957,7 @@ class ChatService:
             if pending is not None:
                 if is_yes:
                     self._remember_approved_recipient(pending)
-                    result = await self._laptop.execute(pending)
+                    result = await self._execute_pending(pending)
                     return {
                         "reply": f"✅ {result.get('message', 'Done')}",
                         "actions": [result],
@@ -1014,16 +1014,25 @@ class ChatService:
             return None
 
         if not actions:
-            return None
+            return await self._maybe_engine_fallback(user_message, attachments)
 
         # If only a pure "chat" action — fall through to normal chat
         if len(actions) == 1 and actions[0].get("action") == "chat":
-            return None
+            return await self._maybe_engine_fallback(user_message, attachments)
 
         # Filter out chat actions mixed with real actions
         laptop_actions = [a for a in actions if a.get("action") != "chat"]
         if not laptop_actions:
-            return None
+            return await self._maybe_engine_fallback(user_message, attachments)
+
+        # Per-app scraper actions were removed in the repivot — those tasks
+        # (WhatsApp/Teams sends etc.) now go to the universal engine, which
+        # drives the real apps via UIA. Sends stay behind a confirm step.
+        from app.services.laptop_control.controller import REMOVED_ACTIONS
+        if any(a.get("action") in REMOVED_ACTIONS for a in laptop_actions):
+            return await self._run_engine_task(
+                user_message, attachments, needs_confirm=True
+            )
 
         # Code-level safety net: if the LLM picked a Roman Urdu pronoun as the
         # recipient (e.g. "Ais", "is", "yeh"), override it by extracting the real
@@ -1111,6 +1120,93 @@ class ChatService:
             "actions": results,
             "pending": [{"token": t, "action": a} for t, a in pending_list],
         }
+
+    # ==================================================================
+    # Universal Engine routing (repivot step 3)
+    # ==================================================================
+
+    # Imperative verbs that signal "do something on the laptop" — used only
+    # when the intent detector found nothing, to decide engine vs plain chat.
+    _TASK_VERBS = (
+        "kholo", "khol", "banao", "bana", "rename", "karo", "kar do", "krdo",
+        "kardo", "delete", "hatao", "uda do", "move", "copy", "likho", "likh",
+        "chalao", "chala", "install", "band karo", "band kr", "close",
+        "open", "create", "type", "download", "search karo", "dhundo",
+        "organize", "saaf karo", "arrange", "sort",
+    )
+    _DESTRUCTIVE_WORDS = ("delete", "hatao", "uda do", "remove kar", "format")
+
+    @classmethod
+    def _looks_like_task(cls, message: str) -> bool:
+        low = f" {message.strip().lower()} "
+        return any(v in low for v in cls._TASK_VERBS)
+
+    async def _maybe_engine_fallback(
+        self, user_message: str, attachments: list[str] | None
+    ) -> dict | None:
+        """Intent detector ne kuch nahi pakda — agar message task jaisa hai
+        to universal engine ko do, warna None (normal chat)."""
+        if not self._looks_like_task(user_message):
+            return None
+        needs_confirm = any(
+            w in user_message.lower() for w in self._DESTRUCTIVE_WORDS
+        )
+        return await self._run_engine_task(
+            user_message, attachments, needs_confirm=needs_confirm
+        )
+
+    async def _run_engine_task(
+        self,
+        task: str,
+        attachments: list[str] | None = None,
+        needs_confirm: bool = False,
+    ) -> dict:
+        """Run (or queue for confirmation) a task on the universal engine."""
+        if attachments:
+            task = f"{task}\n(User ne yeh files attach ki hain: {', '.join(attachments)})"
+
+        if needs_confirm:
+            token = f"confirm_{secrets.token_urlsafe(16)}"
+            pending = {"action": "universal_task", "params": {"task": task}}
+            async with self._pending_lock:
+                self._pending_actions[token] = pending
+            return {
+                "reply": (
+                    f"🤖 Yeh task engine se karunga:\n> {task[:200]}\n\n"
+                    "➡️ **Karne ke liye:** `yes` ya `haan`\n"
+                    "❌ **Cancel:** `no` ya `nahi`"
+                ),
+                "actions": [],
+                "pending": [{"token": token, "action": pending}],
+            }
+
+        from app.services.universal_engine.engine import UniversalEngine
+        result = await UniversalEngine.get().run(task)
+        icon = "✅" if result.get("ok") else "❌"
+        return {
+            "reply": f"{icon} {result.get('reply', '')}",
+            "actions": [
+                {
+                    "action": "universal_task",
+                    "status": "success" if result.get("ok") else "failed",
+                    "message": result.get("reply", ""),
+                    "steps": len(result.get("steps", [])),
+                }
+            ],
+        }
+
+    async def _execute_pending(self, pending: dict) -> dict:
+        """Execute a confirmed pending action — engine task ya controller action."""
+        if pending.get("action") == "universal_task":
+            task = pending.get("params", {}).get("task", "")
+            from app.services.universal_engine.engine import UniversalEngine
+            result = await UniversalEngine.get().run(task)
+            return {
+                "action": "universal_task",
+                "status": "success" if result.get("ok") else "failed",
+                "message": result.get("reply", ""),
+            }
+        return await self._laptop.execute(pending)
 
     @staticmethod
     def _remember_approved_recipient(action: dict) -> None:
