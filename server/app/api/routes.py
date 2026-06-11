@@ -826,6 +826,13 @@ async def engine_status():
     return {"brain": type(brain).__name__, "available": brain.is_available()}
 
 
+@router.get("/engine/progress")
+async def engine_progress():
+    """Live progress of the in-flight engine task (for the chat 'doing…' line)."""
+    from app.services.universal_engine.engine import get_progress
+    return get_progress()
+
+
 @router.post("/engine/run")
 async def engine_run(body: dict):
     """Run one universal task. {task: '...'} → {ok, reply, steps}."""

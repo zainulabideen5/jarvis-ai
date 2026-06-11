@@ -13,9 +13,33 @@ export default function ChatPage() {
   // { file: File, status: 'pending'|'uploading'|'uploaded'|'failed', path?, error? }
   const [attachments, setAttachments] = useState([]);
   const [uploading, setUploading] = useState(false);
+  // Live engine progress line ("Screen parh raha hun…" etc.) shown while a
+  // multi-step task runs, so the wait doesn't feel frozen.
+  const [progressLine, setProgressLine] = useState('');
   const endRef = useRef(null);
   const recognitionRef = useRef(null);
   const fileInputRef = useRef(null);
+
+  // While a request is in flight, poll the engine's live progress so the
+  // user sees what it's doing ("Likh raha hun…") instead of a frozen spinner.
+  useEffect(() => {
+    if (!loading) {
+      setProgressLine('');
+      return;
+    }
+    let alive = true;
+    const tick = async () => {
+      try {
+        const p = await api.engineProgress();
+        if (alive && p && p.active && p.line) setProgressLine(p.line);
+      } catch {
+        /* ignore — progress is best-effort */
+      }
+    };
+    tick();
+    const id = setInterval(tick, 1200);
+    return () => { alive = false; clearInterval(id); };
+  }, [loading]);
 
   // Poll listening + meeting state
   useEffect(() => {
@@ -417,7 +441,10 @@ export default function ChatPage() {
         {loading && (
           <div className="flex justify-start">
             <div className="bg-gray-900 border border-gray-800 rounded-xl px-4 py-3">
-              <p className="text-sm text-gray-500">Soch raha hun...</p>
+              <p className="text-sm text-cyan-400 flex items-center gap-2">
+                <span className="inline-block w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+                {progressLine || 'Soch raha hun...'}
+              </p>
             </div>
           </div>
         )}

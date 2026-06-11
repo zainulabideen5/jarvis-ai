@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import time
 
 from app.core.logging import get_logger
 from app.services.universal_engine.brain import BrainError, get_brain
@@ -112,6 +113,46 @@ WHEN STUCK:
 
 TONE: Replies and questions in Roman Urdu — short, professional, calm. Address the user as "Boss".
 """
+
+
+# Friendly, user-facing label for each tool — powers the live progress line
+# so a 30-second task feels like it's working, not frozen.
+_TOOL_PROGRESS = {
+    "list_windows": "Khuli windows dekh raha hun…",
+    "focus_window": "Window saamne la raha hun…",
+    "ui_tree": "Screen parh raha hun…",
+    "click_element": "Click kar raha hun…",
+    "set_text": "Likh raha hun…",
+    "type_in_window": "Type kar raha hun…",
+    "press_keys": "Bhej raha hun…",
+    "open_app": "App khol raha hun…",
+    "close_app": "App band kar raha hun…",
+    "open_url": "Browser mein khol raha hun…",
+    "powershell": "Command chala raha hun…",
+    "find_files": "File dhoond raha hun…",
+    "screenshot_check": "Screen ka jaiza le raha hun…",
+    "wait": "Load hone ka intezar…",
+}
+
+# Single-user app → one in-flight engine run. The dashboard polls this to show
+# what the engine is doing right now instead of a frozen "Soch raha hun…".
+_PROGRESS: dict = {"active": False, "line": "", "step": 0, "ts": 0.0}
+
+
+def get_progress() -> dict:
+    # Auto-expire: if no step update in the last 12s the run is over/stalled,
+    # so report inactive — no need to clear progress at every return point.
+    p = dict(_PROGRESS)
+    if p.get("active") and (time.monotonic() - p.get("ts", 0.0)) > 12:
+        p["active"] = False
+    return p
+
+
+def _set_progress(active: bool, line: str = "", step: int = 0) -> None:
+    _PROGRESS["active"] = active
+    _PROGRESS["line"] = line
+    _PROGRESS["step"] = step
+    _PROGRESS["ts"] = time.monotonic()
 
 
 class UniversalEngine:
@@ -229,6 +270,7 @@ class UniversalEngine:
 
             tool_name = str(decision.get("tool") or "")
             args = decision.get("args") or {}
+            _set_progress(True, _TOOL_PROGRESS.get(tool_name, "Kaam kar raha hun…"), step_no)
             if tool_name in ("ui_tree", "list_windows"):
                 looked = True
 

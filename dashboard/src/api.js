@@ -128,9 +128,10 @@ export const api = {
   grantConsent: () => postJSON('/consent/grant', { user_agent: navigator.userAgent }),
   revokeConsent: () => postJSON('/consent/revoke', {}),
 
-  // Universal engine (UIA + keyboard + PowerShell, Claude CLI brain)
+  // Universal engine (UIA + keyboard + PowerShell)
   engineStatus: () => fetchJSON('/engine/status'),
   engineRun: (task) => postJSON('/engine/run', { task }),
+  engineProgress: () => fetchJSON('/engine/progress'),
 
   // Office COM check
   officeCheck: () => fetchJSON('/office/check'),
