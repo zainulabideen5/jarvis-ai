@@ -816,6 +816,46 @@ async def laptop_confirm(body: dict):
     return result
 
 
+# ===== Universal Engine (UIA + keyboard + PowerShell, Claude CLI brain) =====
+
+@router.get("/engine/status")
+async def engine_status():
+    """Is the universal engine ready (Claude CLI brain available)?"""
+    from app.services.universal_engine.brain import get_brain
+    brain = get_brain()
+    return {"brain": "claude-cli", "available": brain.is_available()}
+
+
+@router.post("/engine/run")
+async def engine_run(body: dict):
+    """Run one universal task. {task: '...'} → {ok, reply, steps}."""
+    from app.services.consent import ConsentService
+    from app.services.laptop_control.activity_log import ActivityLogger
+    from app.services.universal_engine.engine import UniversalEngine
+
+    task = (body or {}).get("task", "").strip()
+    if not task:
+        raise HTTPException(status_code=400, detail="task required")
+
+    if not await ConsentService.is_granted():
+        return {
+            "ok": False,
+            "reply": (
+                "🔒 Laptop access permission nahi mili. "
+                "Settings page pe ja ke 'Grant Full Access' dabao."
+            ),
+            "steps": [],
+        }
+
+    result = await UniversalEngine.get().run(task)
+    await ActivityLogger.log_action(
+        "universal_task", {"task": task[:300]},
+        result=str(result.get("reply", ""))[:300],
+        status="success" if result.get("ok") else "failed",
+    )
+    return result
+
+
 # ===== Consent =====
 
 @router.get("/consent")
