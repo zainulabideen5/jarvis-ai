@@ -53,33 +53,27 @@ ne diya hi nahi). Warna ACT karo.
 AVAILABLE ACTIONS:
 {TOOLS_DOC}
 
-PLAYBOOK — kisi chat app (Teams/WhatsApp/Slack) mein message bhejna.
-(Naam yahan SIRF misaal hain — asli naam jo user ne diya woh use karo, aur jo
-ui_tree mein dikhe usi exact text se. Kuch hardcode mat samjho.)
-1. PEHLA ui_tree BINA kisi filter ke chalao (sirf window_title do, control_type
-   aur name_contains KHALI). Poori window ek dafa dekho — control_type guess
-   mat karo, jo asli hai woh list mein nazar aayega.
-   NOTE: contact aksar [TreeItem]/[ListItem] hota hai jaise "Chat <NAAM> Available",
-   aur search aksar [ComboBox] "Search" hota hai.
-2. User ke diye naam ka contact list mein dhoondo (jo bhi naam ho). Dikhe to
-   SEEDHE click_element karo us par — EXACT name jo ui_tree mein likha hai
-   (jaise element_name="Chat <NAAM> Available", control_type="TreeItem").
-   Na dikhe TO "Search" ComboBox par click_element, phir type_in_window se naam
-   likho, ui_tree se result dekho, sahi contact click_element karo.
-3. Click ke baad ui_tree DOBARA (bina filter) → message likhne wala box dhoondo
-   (Edit/Document, aksar "Type a message" / "Type a new message" / "Message").
-4. MESSAGE BOX MEIN LIKHNA — chat apps (Teams/WhatsApp/Slack) WebView hote hain,
-   inke compose box par set_text aur sirf-click se focus KAAM NAHI karta. Sahi
-   tareeqa: type_in_window mein box ka naam DO taake woh seedha focus kare:
-     type_in_window {{"window_title":"<asli title>", "element_name":"<box ka naam
-     jaise 'Type a message' / 'Type a new message'>", "text":"<message>"}}
-   (set_text sirf NATIVE fields ke liye — Notepad, dialogs, normal Edit boxes.)
-5. Send: press_keys {{"keys":["enter"], "window_title":"<window ka asli title>"}}
-   (ya "Send" button ho to click_element).
-6. ui_tree se CONFIRM karo ke bheja gaya message, message-list mein nazar aa raha
-   hai. Agar EK baar bhej kar verify fail ho, DOBARA-DOBARA mat bhejo (spam ho
-   jayega) — honestly batao ke confirm nahi hua. "bhej diya" tabhi likho jab
-   verify ho jaye.
+PLAYBOOK — chat app (Teams/WhatsApp/Slack) mein message bhejna. EFFICIENT raho —
+yeh 5-6 step mein ho jaana chahiye. Fazool steps mat lo. (Naam misaal hain;
+asli naam jo user ne diya aur jo ui_tree mein dikhe wohi use karo.)
+
+1. list_windows ya ek ui_tree se window dhoondo. Agar app PEHLE SE khula hai to
+   open_app MAT karo (waqt zaaya). Window khula nahi to hi open_app + wait 2s.
+2. ui_tree BINA filter (sirf window_title). Ek hi dafa — poori window dekho.
+   NOTE: contact aksar [TreeItem]/[ListItem] "Chat <NAAM> Available"; message box
+   aksar [Edit]/[Document] "Type a message"/"Type a new message"; search [ComboBox].
+3. Contact list mein dikhe to SEEDHE click_element (EXACT naam jo dikha,
+   control_type sahi do). Na dikhe to "Search" ComboBox click → type_in_window
+   se naam → ui_tree → contact click.
+4. Message box mein likho — WebView box par set_text/sirf-click KAAM NAHI karta.
+   type_in_window mein box ka naam DO (woh khud focus karega):
+     type_in_window {{"window_title":"<title>", "element_name":"Type a message", "text":"<msg>"}}
+5. press_keys {{"keys":["enter"], "window_title":"<title>"}} — bhej do.
+6. EK verify: ui_tree {{"window_title":"<title>", "name_contains":"<apne message ke
+   pehle 3-4 lafz>"}}. Agar message nazar aaye → FAURAN done. (Filter zaroori hai
+   warna lambi chat mein message cap se aage ho kar nahi dikhega.)
+   Agar EK verify pe na dikhe → DOBARA mat bhejo (spam) — done ke saath honestly
+   batao "type kar diya, confirm nahi hua". "bhej diya" sirf verify hone par.
 
 INTENT: casual/typo app names samjho ("msteams"→Teams, "wts app"→WhatsApp).
 After a user answer, continue from where you left off.
@@ -363,9 +357,24 @@ class UniversalEngine:
                 ),
             })
 
+        # Ran out of steps. But if we typed a message and it's actually present
+        # in the window, the send DID succeed — don't report a false failure.
+        if typed:
+            present = await asyncio.to_thread(
+                _text_present_in_window, typed["window"], typed["text"]
+            )
+            if present:
+                return {
+                    "ok": True,
+                    "reply": f"✅ Boss, \"{typed['text'][:50]}\" bhej diya (chat mein confirm ho gaya).",
+                    "steps": steps,
+                }
         return {
             "ok": False,
-            "reply": f"{max_steps} steps mein task poora nahi hua — task chhota karke dobara try karo.",
+            "reply": (
+                "Boss, poori tarah confirm nahi kar paya — task thoda lamba tha. "
+                "Zara dekh lein, ya dobara bolein."
+            ),
             "steps": steps,
         }
 
