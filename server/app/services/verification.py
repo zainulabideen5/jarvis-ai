@@ -220,7 +220,12 @@ class VerificationService:
         }
 
     async def approve_current(self) -> dict:
-        """Approve current task — move to platform selection."""
+        """Approve current task.
+
+        LEARNING: if we already know how to reach this person (from a past
+        assignment), skip the channel question and send straight away. Only
+        ask the first time — after that it's automatic.
+        """
         s = self.active_session
         if not s:
             return {"reply": "Koi active verification nahi", "verification": None}
@@ -232,9 +237,21 @@ class VerificationService:
         s["stats"]["approved"] += 1
         s["state"] = "awaiting_platform"
 
+        # Auto-route if we've learned this contact's preferred channel
+        client = task.get("_client", "")
+        try:
+            from app.services.contact_routing import ContactRouting
+            learned = await ContactRouting.get(client)
+        except Exception:
+            learned = None
+        if learned and learned.get("channel"):
+            return await self.send_via_platform(
+                learned["channel"], config=None, auto=True
+            )
+
         return self.task_prompt()
 
-    async def send_via_platform(self, platform: str, config) -> dict:
+    async def send_via_platform(self, platform: str, config=None, auto: bool = False) -> dict:
         """Send the approved task message via the chosen platform."""
         s = self.active_session
         if not s:
@@ -252,26 +269,40 @@ class VerificationService:
         # Build the message
         message = self._build_message(title, desc, priority)
 
+        # Resolve how to reach this person (phone / email from clients DB)
+        contact = await self._resolve_contact(client)
+
         send_status = "failed"
         send_msg = ""
 
         try:
             if platform in ("whatsapp", "teams"):
-                # Per-app scrapers removed in the universal-engine repivot;
-                # sends will route through the new UIA-based engine.
-                send_msg = (
-                    f"{platform.title()} send naye universal engine mein rebuild ho raha hai — "
-                    "abhi yeh message manually bhejna hoga."
-                )
+                # Drive the real app via the universal engine (safe UIA).
+                if platform == "whatsapp":
+                    who = contact.get("phone") or client
+                    task_str = (
+                        f"WhatsApp pe '{who}' ko yeh message bhejo aur bhejne ke baad "
+                        f"ui_tree se confirm karo ke message chat mein aa gaya:\n{message}"
+                    )
+                else:
+                    task_str = (
+                        f"Microsoft Teams pe '{client}' naam ke contact ko yeh message "
+                        f"bhejo aur confirm karo ke chala gaya:\n{message}"
+                    )
+                from app.services.universal_engine.engine import UniversalEngine
+                result = await UniversalEngine.get().run(task_str)
+                send_status = "sent" if result.get("ok") else "failed"
+                send_msg = result.get("reply") or result.get("question") or "Engine ne jawab nahi diya"
 
             elif platform == "email":
-                if "@" not in client:
+                to = contact.get("email") or (client if "@" in client else "")
+                if not to:
                     send_msg = f"'{client}' ka email address nahi mila — Clients page mein add karo."
                 else:
                     from app.services.laptop_control.email_sender import EmailSender
                     import asyncio
                     ok, m = await asyncio.to_thread(
-                        EmailSender.send, client, f"Task: {title}", message
+                        EmailSender.send, to, f"Task: {title}", message
                     )
                     send_status = "sent" if ok else "failed"
                     send_msg = m
@@ -279,15 +310,29 @@ class VerificationService:
         except Exception as e:
             send_msg = f"Send failed: {e}"
 
+        # LEARN this channel for the contact — boss ne yeh channel chuna, agli
+        # baar isi pe bhejenge (chahe is dafa delivery mein masla bhi ho).
+        try:
+            from app.services.contact_routing import ContactRouting
+            identifier = (
+                contact.get("phone") if platform == "whatsapp"
+                else contact.get("email") if platform == "email"
+                else client
+            ) or ""
+            await ContactRouting.remember(client, platform, identifier)
+        except Exception as e:
+            log.debug("routing_remember_failed", error=str(e))
+
         # Log
         await self._log_decision(task, "approved", platform=platform,
                                  delivery_status=send_status, delivery_message=send_msg)
 
+        auto_note = f"🧠 (yaad tha {client} ko {platform} pe bhejna) " if auto else ""
         if send_status == "sent":
             s["stats"]["sent"] += 1
-            reply_prefix = f"✅ {send_msg}"
+            reply_prefix = f"✅ {auto_note}{send_msg}"
         else:
-            reply_prefix = f"⚠️ {send_msg}"
+            reply_prefix = f"⚠️ {auto_note}{send_msg}"
 
         # Move to next
         s["current_index"] += 1
@@ -305,6 +350,38 @@ class VerificationService:
             "reply": f"{reply_prefix}\n\n{next_prompt['reply']}",
             "verification": next_prompt["verification"],
         }
+
+    @staticmethod
+    async def _resolve_contact(name: str) -> dict:
+        """Look up a contact's phone/email from the clients table.
+
+        Returns {"phone": ..., "email": ...} (values may be empty). Flexible
+        name match so "Ahmed" finds "Ahmed Khan".
+        """
+        out = {"phone": "", "email": ""}
+        key = (name or "").strip().lower()
+        if not key:
+            return out
+        try:
+            row = None
+            async with async_session() as db:
+                row = (await db.execute(
+                    text("SELECT phone, email FROM clients WHERE LOWER(name) = :k "
+                         "AND is_active = 1 LIMIT 1"),
+                    {"k": key},
+                )).first()
+                if not row:
+                    row = (await db.execute(
+                        text("SELECT phone, email FROM clients WHERE LOWER(name) LIKE :k "
+                             "AND is_active = 1 LIMIT 1"),
+                        {"k": f"%{key}%"},
+                    )).first()
+            if row:
+                out["phone"] = (row[0] or "").strip()
+                out["email"] = (row[1] or "").strip()
+        except Exception as e:
+            log.debug("resolve_contact_failed", error=str(e))
+        return out
 
     def _build_message(self, title: str, desc: str, priority: str) -> str:
         """Build the message text for the team member."""

@@ -50,6 +50,10 @@ async def lifespan(app: FastAPI):
     from app.services.consent import ConsentService
     await ConsentService.ensure_table()
 
+    # Ensure contact-routing (learned channel per contact) table
+    from app.services.contact_routing import ContactRouting
+    await ContactRouting.ensure_table()
+
     # Start background processor
     processor = ChunkProcessor(config)
     processor_task = asyncio.create_task(processor.run())
