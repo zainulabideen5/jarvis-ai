@@ -31,28 +31,42 @@ You can return one of THREE shapes:
 1. Run an action (EXACTLY these keys):
 {{"tool": "<action_name>", "args": {{...}}}}
 
-2. Ask the user a short question — when something needed is genuinely unclear or
-   missing (which file/app/person, an ambiguous name, a missing detail). NEVER
-   guess blindly and NEVER give up silently; ask instead:
-{{"ask": "<ek chhota, clear sawal Roman Urdu mein>"}}
-
-3. Finish (task done OR truly impossible) — put everything the user should see
+2. Finish (task done OR truly impossible) — everything the user should see goes
    inside reply:
 {{"done": true, "reply": "<answer in Roman Urdu>"}}
+
+3. ASK — only as a LAST resort, for info that is NOT on screen and you cannot
+   discover yourself (e.g. the message text wasn't given). Format:
+{{"ask": "<ek chhota sawal Roman Urdu mein>"}}
+
+GOLDEN RULE — DEKHO, MAT POOCHO:
+Tum khud screen dekh sakte ho via ui_tree. So NEVER ask the user things you can
+find yourself. These are FORBIDDEN questions (find them with ui_tree instead):
+  ✗ "App khula hai ya nahi?" → list_windows / ui_tree se khud dekho
+  ✗ "Contact ka naam sahi hai?" → ui_tree mein contact list khud parho
+  ✗ "Search box kahan hai?" → ui_tree mein "Search" ComboBox/Edit khud dhoondo
+  ✗ "Sab contacts dekhoon?" → haan, ui_tree chalao aur khud dekho
+Sirf tab ask karo jab cheez screen par hai hi nahi (jaise message ka text user
+ne diya hi nahi). Warna ACT karo.
 
 AVAILABLE ACTIONS:
 {TOOLS_DOC}
 
-UNDERSTANDING THE USER (important):
-- Interpret intent generously. "yeh band kr do" = close the active/related app;
-  "wahi file" = the file just discussed; "mera kaam wala folder" = infer from
-  context or, if unsure, ASK.
-- Map casual/typo app names to real apps (e.g. "msteams", "team", "vs code").
-- If the command is reasonably clear, JUST DO IT — don't over-ask.
-- If a key detail is missing or ambiguous (recipient, filename, target app,
-  destination), use `ask` with ONE specific question. One good question beats a
-  failed guess.
-- After the user answers, continue the task from where you left off.
+PLAYBOOK — kisi chat app (Teams/WhatsApp/Slack) mein message bhejna:
+1. ui_tree on the app window → poori list dekho (contacts, search, message box).
+2. Contact list mein us shaks ka naam dhoondo (TreeItem/ListItem jaise
+   "Chat Subhan Ansari Available"). Mil jaye to click_element us par.
+   Na mile to "Search"/"New message" box mein set_text se naam likho, ui_tree
+   se result dekho, sahi contact click_element karo.
+3. ui_tree dobara → message likhne wala box (Edit/"Type a message"/RichEdit) dhoondo.
+4. set_text us box mein message daalo (SAFE — keystroke nahi).
+5. Send: agar "Send" button hai to click_element; warna press_keys
+   {{"keys":["enter"], "window_title":"<app>"}}.
+6. ui_tree se CONFIRM karo ke message conversation mein nazar aa raha hai.
+   Tabhi done bolo. Na dikhe to honestly batao.
+
+INTENT: casual/typo app names samjho ("msteams"→Teams, "wts app"→WhatsApp).
+After a user answer, continue from where you left off.
 
 EXECUTION GUIDELINES:
 1. ui_tree before interacting inside a window — read real element names, don't guess.
@@ -133,6 +147,8 @@ class UniversalEngine:
         else:
             transcript = [{"role": "user", "content": f"TASK: {task}"}]
         steps: list[dict] = []
+        looked = False          # has ui_tree/list_windows been run yet?
+        ask_rejections = 0      # how many premature asks we've pushed back on
 
         for step_no in range(1, max_steps + 1):
             raw = None
@@ -169,6 +185,23 @@ class UniversalEngine:
             # Clarifying question — pause and hand control back to the user.
             if decision.get("ask"):
                 question = str(decision["ask"]).strip()
+                # GUARD: don't let the model ask things it can SEE. If it tries
+                # to ask before ever inspecting the screen, push it to look
+                # first (up to 2 times) instead of bothering the user.
+                if not looked and ask_rejections < 2:
+                    ask_rejections += 1
+                    transcript.append({"role": "assistant", "content": json.dumps(decision, ensure_ascii=False)})
+                    transcript.append({
+                        "role": "user",
+                        "content": (
+                            "RUKO: user se mat poocho. Pehle KHUD dekho — relevant "
+                            "window par ui_tree chalao (ya list_windows). Jo cheez "
+                            "screen par hai (app khula hai?, contact ka naam, search "
+                            "box) woh tum khud parh sakte ho. Ab ek tool action do."
+                        ),
+                    })
+                    steps.append({"step": step_no, "tool": "ask(rejected)", "ok": False})
+                    continue
                 transcript.append({"role": "assistant", "content": json.dumps(decision, ensure_ascii=False)})
                 log.info("engine_ask", question=question[:120], step=step_no)
                 return {
@@ -181,6 +214,8 @@ class UniversalEngine:
 
             tool_name = str(decision.get("tool") or "")
             args = decision.get("args") or {}
+            if tool_name in ("ui_tree", "list_windows"):
+                looked = True
             fn = TOOLS.get(tool_name)
 
             if fn is None:
