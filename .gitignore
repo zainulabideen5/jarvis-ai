@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+*.env.local
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Data
+desktop-agent/data/
+server/data/
+*.wav
+*.mp3
+*.pcm
+*.db
+
+# Dashboard
+dashboard/node_modules/
+dashboard/dist/
+
+# Torch models (cached)
+*.pt
+*.pth
+
+# Logs
+*.log
+logs/

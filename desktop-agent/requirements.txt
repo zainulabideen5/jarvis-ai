@@ -1,0 +1,44 @@
+# Audio capture (WASAPI loopback + mic)
+PyAudioWPatch>=0.2.12
+
+# VAD (pulls torch automatically)
+silero-vad>=5.1
+
+# Audio processing
+numpy>=1.26,<3.0
+scipy>=1.12,<2.0
+
+# Networking
+websockets>=14.0,<17.0
+
+# Windows integration
+pywin32>=306
+psutil>=5.9
+
+# Config & validation
+pydantic>=2.0,<3.0
+pydantic-settings>=2.0,<3.0
+python-dotenv>=1.0,<2.0
+
+# Thread-safe async queue bridge
+janus>=1.0,<2.0
+
+# Logging
+structlog>=24.0,<26.0
+
+# Action execution - Browser automation
+playwright>=1.40
+
+# Action execution - Vision driver
+mss>=9.0
+pyautogui>=0.9.54
+
+# Context capture
+pyperclip>=1.8
+
+# System tray
+pystray>=0.19
+Pillow>=10.0
+
+# TOML config
+tomli>=2.0;python_version<"3.11"

@@ -1,0 +1,22 @@
+[audio]
+sample_rate = 16000
+chunk_duration_sec = 15.0
+buffer_frames = 512
+
+[vad]
+threshold = 0.35
+min_speech_ms = 200
+min_silence_ms = 800
+
+[transport]
+server_ws_url = "ws://localhost:8000/ws/agent"
+server_api_url = "http://localhost:8000/api"
+upload_timeout_sec = 30
+reconnect_delay_sec = 5.0
+
+[context]
+window_poll_interval_sec = 1.0
+
+[general]
+log_level = "INFO"
+data_dir = "./data"

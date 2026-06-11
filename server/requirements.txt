@@ -1,0 +1,40 @@
+# Web framework
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.34,<1.0
+# multipart form parsing — required for /api/chat/upload
+python-multipart>=0.0.20,<1.0
+
+# Database
+sqlalchemy>=2.0,<3.0
+aiosqlite>=0.21,<1.0
+
+# AI - Transcription
+faster-whisper>=1.1,<2.0
+
+# AI - Task extraction (Groq)
+groq>=0.25,<1.0
+# LLM fallbacks: Cerebras uses OpenAI-compatible API; Gemini uses Google SDK
+openai>=2.0,<3.0
+google-generativeai>=0.8,<1.0
+
+# AI - Speaker diarization (optional — set JARVIS_DIARIZATION_ENABLED=true)
+pyannote.audio>=3.1,<4.0
+
+# Validation & Config
+pydantic>=2.0,<3.0
+pydantic-settings>=2.0,<3.0
+python-dotenv>=1.0,<2.0
+
+# Logging
+structlog>=24.0,<26.0
+
+# Browser automation (for laptop_control: WhatsApp/Teams via Chrome CDP)
+playwright>=1.40,<2.0
+
+# Web search (server-side — for in-chat search results, no fabrication)
+ddgs>=9.0,<10.0
+# Article extraction for Perplexity-style answer synthesis
+trafilatura>=2.0,<3.0
+
+# CORS
+# (built into FastAPI)

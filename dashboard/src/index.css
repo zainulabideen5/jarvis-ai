@@ -1,0 +1,600 @@
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap');
+@import "tailwindcss";
+
+:root {
+  --bg: #060810;
+  --bg-2: #0a0d18;
+  --bg-3: #101526;
+  --panel: rgba(15, 22, 38, 0.7);
+  --panel-solid: #0c111e;
+  --border: rgba(34, 211, 238, 0.18);
+  --border-bright: rgba(34, 211, 238, 0.5);
+
+  /* Cyan primary (Stonic style) */
+  --cyan: #22d3ee;
+  --cyan-bright: #67e8f9;
+  --cyan-soft: rgba(34, 211, 238, 0.15);
+  --cyan-glow: 0 0 20px rgba(34, 211, 238, 0.4);
+
+  /* Magenta secondary */
+  --magenta: #e91e63;
+  --magenta-bright: #f472b6;
+
+  /* Status colors */
+  --orange: #ff8a1f;
+  --green: #10b981;
+  --red: #ef4444;
+
+  --text: #e6f1ff;
+  --text-muted: #7d8ba1;
+  --text-dim: #4a5568;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Rajdhani', system-ui, sans-serif;
+  letter-spacing: 0.02em;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background:
+    radial-gradient(ellipse at 30% 20%, rgba(34, 211, 238, 0.08), transparent 60%),
+    radial-gradient(ellipse at 70% 80%, rgba(233, 30, 99, 0.06), transparent 60%),
+    #060810;
+  background-attachment: fixed;
+  overflow: hidden;
+}
+
+#root { min-height: 100vh; }
+
+/* Subtle grid */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(34, 211, 238, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 211, 238, 0.025) 1px, transparent 1px);
+  background-size: 60px 60px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Typography */
+.font-display {
+  font-family: 'Orbitron', sans-serif;
+  letter-spacing: 0.08em;
+}
+.font-mono { font-family: 'Share Tech Mono', monospace; }
+
+/* Panels */
+.j-panel {
+  background: var(--panel);
+  backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  position: relative;
+}
+
+.j-panel-glow {
+  background: var(--panel);
+  backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid var(--border-bright);
+  border-radius: 8px;
+  box-shadow: 0 0 30px rgba(34, 211, 238, 0.08), inset 0 0 20px rgba(34, 211, 238, 0.03);
+}
+
+.j-panel-bracket::before,
+.j-panel-bracket::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--cyan);
+  pointer-events: none;
+}
+.j-panel-bracket::before {
+  top: -1px; left: -1px;
+  border-right: none; border-bottom: none;
+}
+.j-panel-bracket::after {
+  bottom: -1px; right: -1px;
+  border-left: none; border-top: none;
+}
+
+/* Buttons */
+.j-btn {
+  background: rgba(34, 211, 238, 0.08);
+  border: 1px solid var(--border-bright);
+  color: var(--cyan-bright);
+  padding: 0.5rem 1.25rem;
+  border-radius: 4px;
+  font-family: 'Rajdhani', sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.8rem;
+  transition: all 0.18s ease;
+  cursor: pointer;
+}
+.j-btn:hover {
+  background: rgba(34, 211, 238, 0.18);
+  border-color: var(--cyan);
+  box-shadow: var(--cyan-glow);
+  color: #fff;
+}
+
+.j-btn-primary {
+  background: linear-gradient(135deg, #22d3ee, #06b6d4);
+  border: 1px solid var(--cyan-bright);
+  color: #001018;
+  font-weight: 700;
+  box-shadow: var(--cyan-glow);
+}
+.j-btn-primary:hover {
+  background: linear-gradient(135deg, #67e8f9, #22d3ee);
+  box-shadow: 0 0 30px rgba(34, 211, 238, 0.7);
+}
+
+.j-btn-magenta {
+  background: linear-gradient(135deg, #e91e63, #be185d);
+  border: 1px solid #f472b6;
+  color: #fff;
+  box-shadow: 0 0 20px rgba(233, 30, 99, 0.4);
+}
+
+/* Inputs */
+.j-input {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.6rem 1rem;
+  border-radius: 4px;
+  font-family: 'Rajdhani', sans-serif;
+  transition: all 0.18s;
+  width: 100%;
+}
+.j-input:focus {
+  outline: none;
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.1);
+}
+
+/* Status dots */
+.j-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.j-dot-on {
+  background: var(--cyan);
+  box-shadow: 0 0 6px var(--cyan), 0 0 12px rgba(34, 211, 238, 0.5);
+  animation: jPulse 1.6s ease-in-out infinite;
+}
+.j-dot-off { background: #2a3344; }
+.j-dot-green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.j-dot-orange { background: var(--orange); box-shadow: 0 0 6px var(--orange); }
+
+@keyframes jPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.15); }
+}
+
+/* Glow text */
+.j-glow { text-shadow: 0 0 10px rgba(34, 211, 238, 0.6); }
+.j-glow-magenta { text-shadow: 0 0 10px rgba(233, 30, 99, 0.6); }
+
+.j-title-glow {
+  background: linear-gradient(90deg, #22d3ee, #67e8f9, #22d3ee);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: jShimmer 4s linear infinite;
+}
+@keyframes jShimmer { to { background-position: 200% center; } }
+
+/* ===== Holographic Sphere — Multi-ring sci-fi ===== */
+.j-sphere {
+  width: 220px;
+  height: 220px;
+  position: relative;
+  margin: auto;
+  perspective: 800px;
+}
+
+.j-sphere-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid rgba(34, 211, 238, 0.4);
+  pointer-events: none;
+}
+.j-sphere-ring-1 {
+  animation: jSpinX 8s linear infinite;
+  border-color: rgba(34, 211, 238, 0.6);
+  box-shadow: 0 0 20px rgba(34, 211, 238, 0.4);
+}
+.j-sphere-ring-2 {
+  animation: jSpinY 12s linear infinite reverse;
+  border-color: rgba(34, 211, 238, 0.4);
+}
+.j-sphere-ring-3 {
+  animation: jSpinDiag 15s linear infinite;
+  border-color: rgba(103, 232, 249, 0.3);
+}
+.j-sphere-ring-4 {
+  inset: 25px;
+  animation: jSpinX 6s linear infinite reverse;
+  border-color: rgba(233, 30, 99, 0.5);
+  border-style: dashed;
+}
+.j-sphere-core {
+  position: absolute;
+  inset: 30px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 35% 35%, rgba(103, 232, 249, 0.6), rgba(34, 211, 238, 0.3) 50%, transparent 80%),
+    radial-gradient(circle at 65% 65%, rgba(233, 30, 99, 0.3), transparent 50%);
+  animation: jPulseCore 3s ease-in-out infinite;
+  box-shadow:
+    0 0 40px rgba(34, 211, 238, 0.5),
+    inset 0 0 30px rgba(34, 211, 238, 0.3);
+}
+
+/* Sphere data dots */
+.j-sphere-dot {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #67e8f9;
+  box-shadow: 0 0 8px #22d3ee, 0 0 16px rgba(34, 211, 238, 0.6);
+}
+.j-sphere-dot:nth-child(5) { top: 8%; left: 50%; animation: jOrbit 8s linear infinite; }
+.j-sphere-dot:nth-child(6) { top: 50%; left: 92%; animation: jOrbit 10s linear infinite reverse; }
+.j-sphere-dot:nth-child(7) { top: 92%; left: 50%; background: #f472b6; box-shadow: 0 0 8px #e91e63; animation: jOrbit 12s linear infinite; }
+.j-sphere-dot:nth-child(8) { top: 50%; left: 8%; animation: jOrbit 14s linear infinite reverse; }
+
+@keyframes jSpinX {
+  from { transform: rotateX(75deg) rotateZ(0deg); }
+  to { transform: rotateX(75deg) rotateZ(360deg); }
+}
+@keyframes jSpinY {
+  from { transform: rotateY(75deg) rotateZ(0deg); }
+  to { transform: rotateY(75deg) rotateZ(360deg); }
+}
+@keyframes jSpinDiag {
+  from { transform: rotate3d(1, 1, 0, 65deg) rotateZ(0deg); }
+  to { transform: rotate3d(1, 1, 0, 65deg) rotateZ(360deg); }
+}
+@keyframes jOrbit {
+  from { transform: rotate(0deg) translateY(-110px) rotate(0deg); }
+  to { transform: rotate(360deg) translateY(-110px) rotate(-360deg); }
+}
+@keyframes jPulseCore {
+  0%, 100% { opacity: 0.85; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.05); box-shadow: 0 0 60px rgba(34, 211, 238, 0.7), inset 0 0 50px rgba(34, 211, 238, 0.4); }
+}
+
+/* ===== Scan line effect ===== */
+.j-scan-line {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+  box-shadow: 0 0 12px var(--cyan);
+  animation: jScanDown 4s linear infinite;
+  pointer-events: none;
+  opacity: 0.6;
+}
+@keyframes jScanDown {
+  0% { transform: translateY(0); opacity: 0; }
+  10% { opacity: 0.8; }
+  90% { opacity: 0.8; }
+  100% { transform: translateY(100vh); opacity: 0; }
+}
+
+/* ===== Animated borders ===== */
+.j-panel-animated {
+  position: relative;
+  background: var(--panel);
+  backdrop-filter: blur(16px) saturate(140%);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.j-panel-animated::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--cyan), transparent 50%, var(--magenta));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+/* ===== Spectrum Bars (waveform vibe) ===== */
+.j-spectrum {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 24px;
+}
+.j-spectrum-bar {
+  width: 3px;
+  background: linear-gradient(180deg, var(--cyan-bright), var(--cyan));
+  border-radius: 1px;
+  box-shadow: 0 0 6px var(--cyan);
+  animation: jSpectrum 0.9s ease-in-out infinite;
+}
+.j-spectrum-bar:nth-child(1) { animation-delay: 0.0s; height: 60%; }
+.j-spectrum-bar:nth-child(2) { animation-delay: 0.1s; height: 100%; }
+.j-spectrum-bar:nth-child(3) { animation-delay: 0.2s; height: 70%; }
+.j-spectrum-bar:nth-child(4) { animation-delay: 0.3s; height: 90%; }
+.j-spectrum-bar:nth-child(5) { animation-delay: 0.4s; height: 50%; }
+.j-spectrum-bar:nth-child(6) { animation-delay: 0.5s; height: 80%; }
+.j-spectrum-bar:nth-child(7) { animation-delay: 0.2s; height: 65%; }
+.j-spectrum-bar:nth-child(8) { animation-delay: 0.3s; height: 95%; }
+
+@keyframes jSpectrum {
+  0%, 100% { transform: scaleY(0.3); opacity: 0.6; }
+  50% { transform: scaleY(1); opacity: 1; }
+}
+
+/* ===== Connection lines (between panels) ===== */
+.j-connect-line {
+  position: absolute;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+  opacity: 0.6;
+  pointer-events: none;
+  overflow: hidden;
+}
+.j-connect-line::after {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: 0;
+  width: 30px;
+  height: 5px;
+  background: var(--cyan);
+  border-radius: 50%;
+  box-shadow: 0 0 12px var(--cyan), 0 0 24px var(--cyan);
+  animation: jConnectFlow 2s linear infinite;
+  filter: blur(1px);
+}
+@keyframes jConnectFlow {
+  from { left: -30px; opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  to { left: 100%; opacity: 0; }
+}
+
+/* ===== Pulsing corner labels ===== */
+.j-corner-label {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  pointer-events: none;
+}
+.j-corner-id {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 9px;
+  color: var(--cyan);
+  pointer-events: none;
+}
+
+/* ===== Hex grid background pattern (subtle) ===== */
+.j-hex-bg {
+  background-image:
+    repeating-linear-gradient(60deg, rgba(34, 211, 238, 0.03) 0 1px, transparent 1px 28px),
+    repeating-linear-gradient(-60deg, rgba(34, 211, 238, 0.03) 0 1px, transparent 1px 28px);
+}
+
+/* ===== Glow pulse for status ===== */
+.j-pulse-glow {
+  animation: jPulseGlow 2s ease-in-out infinite;
+}
+@keyframes jPulseGlow {
+  0%, 100% { box-shadow: 0 0 15px rgba(34, 211, 238, 0.4); }
+  50% { box-shadow: 0 0 35px rgba(34, 211, 238, 0.8), 0 0 60px rgba(34, 211, 238, 0.3); }
+}
+
+/* ===== Hover lift ===== */
+.j-hover-lift {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.j-hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(34, 211, 238, 0.15);
+}
+
+/* ===== Progress bars ===== */
+.j-progress {
+  height: 4px;
+  background: rgba(34, 211, 238, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+  position: relative;
+}
+.j-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--cyan), var(--cyan-bright));
+  box-shadow: 0 0 8px var(--cyan);
+  border-radius: 2px;
+  position: relative;
+  transition: width 0.6s ease;
+}
+.j-progress-fill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 20px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4));
+  animation: jProgressShine 1.5s ease-in-out infinite;
+}
+@keyframes jProgressShine {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
+}
+
+/* ===== Sparkline mini chart ===== */
+.j-sparkline {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 24px;
+}
+.j-sparkline-bar {
+  flex: 1;
+  background: linear-gradient(180deg, var(--cyan-bright), var(--cyan));
+  opacity: 0.7;
+  border-radius: 1px;
+  transition: all 0.3s;
+}
+.j-sparkline-bar:hover { opacity: 1; box-shadow: 0 0 6px var(--cyan); }
+
+/* ===== Hexagon node ===== */
+.j-hex {
+  width: 40px;
+  height: 46px;
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.2), rgba(34, 211, 238, 0.05));
+  border: 1.5px solid var(--cyan);
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.3);
+}
+
+/* ===== Connection lines (SVG-friendly) ===== */
+.j-connector svg {
+  position: absolute;
+  pointer-events: none;
+}
+
+.j-line-anim {
+  stroke-dasharray: 4 4;
+  animation: jDash 2s linear infinite;
+}
+@keyframes jDash {
+  to { stroke-dashoffset: -16; }
+}
+
+/* ===== Stat dot grid ===== */
+.j-dot-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 3px;
+}
+.j-dot-grid > span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(34, 211, 238, 0.2);
+}
+.j-dot-grid > span.on {
+  background: var(--cyan);
+  box-shadow: 0 0 4px var(--cyan);
+}
+
+/* ===== Telemetry rotating loader ===== */
+.j-loader-ring {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(34, 211, 238, 0.2);
+  border-top-color: var(--cyan);
+  border-radius: 50%;
+  animation: jSpin 1s linear infinite;
+}
+@keyframes jSpin {
+  to { transform: rotate(360deg); }
+}
+
+/* ===== Holo node (small data point) ===== */
+.j-holo-node {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(34, 211, 238, 0.4), rgba(34, 211, 238, 0.05));
+  border: 1px solid var(--cyan);
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.4);
+}
+.j-holo-node::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 1px dashed rgba(34, 211, 238, 0.3);
+  animation: jSpinX 8s linear infinite;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(34, 211, 238, 0.25);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--cyan); }
+::selection { background: var(--cyan); color: #000; }
+
+/* Tailwind softer overrides */
+[class*="bg-gray-950"] { background: transparent !important; }
+[class*="bg-gray-900"]:not([class*="/"]) { background: var(--bg-2) !important; }
+[class*="bg-gray-800"]:not([class*="/"]) { background: var(--bg-3) !important; }
+[class*="border-gray-800"], [class*="border-gray-700"] { border-color: var(--border) !important; }
+
+[class*="bg-blue-600"]:not([class*="hover:"]),
+[class*="bg-blue-500"]:not([class*="hover:"]) {
+  background: linear-gradient(135deg, #22d3ee, #06b6d4) !important;
+  color: #001018 !important;
+}
+[class*="hover:bg-blue-500"]:hover {
+  background: linear-gradient(135deg, #67e8f9, #22d3ee) !important;
+  box-shadow: var(--cyan-glow);
+}
+[class*="text-blue-400"], [class*="text-blue-500"] { color: var(--cyan-bright) !important; }
+[class*="border-blue-400"], [class*="border-blue-500"] { border-color: var(--cyan) !important; }
+[class*="bg-blue-600/20"], [class*="bg-blue-600\\/20"] { background: rgba(34, 211, 238, 0.15) !important; }
+
+[class*="text-gray-100"], [class*="text-gray-200"] { color: var(--text) !important; }
+[class*="text-gray-300"] { color: #c5d0e0 !important; }
+[class*="text-gray-400"], [class*="text-gray-500"] { color: var(--text-muted) !important; }
+[class*="text-gray-600"] { color: var(--text-dim) !important; }
+[class*="text-green-400"], [class*="text-green-500"] { color: #34d399 !important; }
+
+[class*="bg-gray-900\\/"], [class*="bg-gray-800\\/"] {
+  background: var(--panel) !important;
+  backdrop-filter: blur(12px);
+}
+
+button:focus, a:focus, input:focus { outline: none; }

@@ -1,0 +1,19 @@
+INFO:     Started server process [24084]
+INFO:     Waiting for application startup.
+2026-06-04T17:28:58.895879Z [info     ] server_starting                host=0.0.0.0 port=8000
+2026-06-04T17:28:58.933045Z [info     ] database_initialized          
+2026-06-04T17:28:58.951994Z [info     ] special_folders_resolved       desktop='C:\\Users\\Noman Traders\\OneDrive\\Desktop' documents='C:\\Users\\Noman Traders\\OneDrive\\Documents'
+2026-06-04T17:28:58.992629Z [info     ] jarvis_server_ready           
+2026-06-04T17:28:58.998712Z [info     ] processor_started             
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+2026-06-04T17:28:59.049757Z [info     ] smart_notification_sent        message='9 high/urgent tasks pending hain:\n  • Ahmed ko WhatsApp pe m'
+2026-06-04T17:28:59.061925Z [info     ] smart_notification_sent        message='33 tasks 24 ghante se zyada se pending hain — review karo!'
+2026-06-04T17:33:59.106988Z [info     ] smart_notification_sent        message='9 high/urgent tasks pending hain:\n  • Ahmed ko WhatsApp pe m'
+2026-06-04T17:33:59.123311Z [info     ] smart_notification_sent        message='33 tasks 24 ghante se zyada se pending hain — review karo!'
+2026-06-04T17:39:00.135080Z [info     ] smart_notification_sent        message='9 high/urgent tasks pending hain:\n  • Ahmed ko WhatsApp pe m'
+2026-06-04T17:39:00.277698Z [info     ] smart_notification_sent        message='33 tasks 24 ghante se zyada se pending hain — review karo!'
+2026-06-04T17:44:00.298043Z [info     ] smart_notification_sent        message='9 high/urgent tasks pending hain:\n  • Ahmed ko WhatsApp pe m'
+2026-06-04T17:44:00.308016Z [info     ] smart_notification_sent        message='33 tasks 24 ghante se zyada se pending hain — review karo!'
+2026-06-04T17:49:00.330094Z [info     ] smart_notification_sent        message='9 high/urgent tasks pending hain:\n  • Ahmed ko WhatsApp pe m'
+2026-06-04T17:49:00.342063Z [info     ] smart_notification_sent        message='33 tasks 24 ghante se zyada se pending hain — review karo!'

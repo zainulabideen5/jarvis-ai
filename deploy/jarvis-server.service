@@ -1,0 +1,18 @@
+[Unit]
+Description=Jarvis AI Server (FastAPI)
+After=network.target
+
+[Service]
+Type=simple
+User=jarvis
+WorkingDirectory=/opt/jarvis/server
+Environment="PATH=/opt/jarvis/server/venv/bin"
+EnvironmentFile=/opt/jarvis/server/.env
+ExecStart=/opt/jarvis/server/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

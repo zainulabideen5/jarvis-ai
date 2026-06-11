@@ -1,0 +1,74 @@
+{
+  "manifest_version": 3,
+  "name": "JARVIS Bridge",
+  "version": "0.15.6",
+  "description": "Lets your locally-running JARVIS server drive your already-logged-in Chrome — WhatsApp, Teams, Gmail, Trello, all in background tabs without touching your project work.",
+
+  "permissions": [
+    "tabs",
+    "scripting",
+    "storage",
+    "activeTab",
+    "notifications",
+    "debugger"
+  ],
+
+  "host_permissions": [
+    "https://web.whatsapp.com/*",
+    "https://teams.microsoft.com/*",
+    "https://teams.live.com/*",
+    "https://mail.google.com/*",
+    "https://trello.com/*",
+    "https://app.slack.com/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "JARVIS Bridge",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["https://web.whatsapp.com/*"],
+      "js": ["lib/selectors.js", "content/whatsapp.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://teams.microsoft.com/*", "https://teams.live.com/*"],
+      "js": ["lib/selectors.js", "content/teams.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://mail.google.com/*"],
+      "js": ["lib/selectors.js", "content/gmail.js"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "web_accessible_resources": [
+    {
+      "resources": ["lib/selectors.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
