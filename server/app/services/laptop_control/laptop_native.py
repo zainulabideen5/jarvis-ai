@@ -264,24 +264,136 @@ class LaptopNative:
         except Exception as e:
             return {"ok": False, "error": str(e)[:200]}
 
-    def uia_type(self, window_title: str, field_name: str, text: str, control_type: str = "Edit") -> dict:
-        """Type into a named field in a window."""
-        try:
-            pwa = _get_pywinauto()
-            app = pwa.Application(backend="uia").connect(title_re=f".*{window_title}.*", timeout=8)
-            window = app.top_window()
+    @staticmethod
+    def _find_window(window_title: str):
+        """Return the first top-level UIA window whose title contains the
+        substring — robust when several windows match (Application.connect
+        errors on multiple matches)."""
+        from pywinauto import Desktop
+        needle = (window_title or "").lower()
+        for w in Desktop(backend="uia").windows():
             try:
-                el = window.child_window(title=field_name, control_type=control_type)
-                el.set_text(text)
+                if needle in (w.window_text() or "").lower():
+                    return w
             except Exception:
-                # Fallback — first matching control type
-                el = window.descendants(control_type=control_type)
-                if not el:
+                continue
+        return None
+
+    def uia_type(self, window_title: str, field_name: str, text: str, control_type: str = "Edit") -> dict:
+        """Set text into a named field via UIA (ValuePattern — SAFE).
+
+        Sets the value directly through the accessibility API. No global
+        keystrokes, so it does NOT leak into whatever window the user is
+        currently working in, and it isn't flagged by antivirus as a
+        SendKeys/keylogger pattern. Preferred over keyboard typing.
+        """
+        try:
+            window = self._find_window(window_title)
+            if window is None:
+                return {"ok": False, "error": f"window '{window_title}' nahi mili"}
+            target = None
+            try:
+                cand = window.child_window(title=field_name, control_type=control_type)
+                if cand.exists():
+                    target = cand
+            except Exception:
+                target = None
+            if target is None:
+                els = window.descendants(control_type=control_type)
+                if not els:
                     return {"ok": False, "error": f"No {control_type} control found"}
-                el[0].set_text(text)
-            return {"ok": True, "typed_chars": len(text)}
+                target = els[0]
+
+            target.set_text(text)
+
+            # Read back via ValuePattern to CONFIRM it actually took — so the
+            # engine never reports a fake success.
+            verified = None
+            try:
+                verified = target.get_value()
+            except Exception:
+                verified = None
+            ok = verified is not None and text.strip() in str(verified)
+            return {
+                "ok": True,
+                "typed_chars": len(text),
+                "verified": bool(ok),
+                "current_value": (str(verified)[:200] if verified is not None else None),
+            }
         except Exception as e:
             return {"ok": False, "error": str(e)[:200]}
+
+    def uia_invoke(self, window_title: str, element_name: str, control_type: str = "Button") -> dict:
+        """Activate an element via UIA Invoke/Toggle/Select pattern — SAFE.
+
+        Triggers the control through the accessibility API instead of moving
+        the real mouse and clicking. Works without stealing foreground and is
+        not flagged by antivirus. Falls back to a real click only if the
+        element exposes no invokable pattern.
+        """
+        try:
+            window = self._find_window(window_title)
+            if window is None:
+                return {"ok": False, "error": f"window '{window_title}' nahi mili"}
+
+            target = None
+            try:
+                target = window.child_window(title=element_name, control_type=control_type)
+                if not target.exists():
+                    target = None
+            except Exception:
+                target = None
+            if target is None:
+                for e in window.descendants(control_type=control_type):
+                    try:
+                        if element_name.lower() in (e.window_text() or "").lower():
+                            target = e
+                            break
+                    except Exception:
+                        continue
+            if target is None:
+                return {"ok": False, "error": f"'{element_name}' element nahi mila"}
+
+            # Prefer pattern-based activation (no mouse, no foreground steal)
+            for method in ("invoke", "toggle", "select"):
+                fn = getattr(target, method, None)
+                if callable(fn):
+                    try:
+                        fn()
+                        return {"ok": True, "invoked": target.window_text() or element_name, "via": method}
+                    except Exception:
+                        continue
+            # Last resort: real click
+            target.click_input()
+            return {"ok": True, "invoked": target.window_text() or element_name, "via": "click"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200]}
+
+    def focus_and_verify(self, title_substring: str) -> dict:
+        """Focus a window AND confirm it actually became the active window.
+
+        Returns ok=True only if the target is now foreground — so callers can
+        safely send keystrokes without risk of typing into the user's own
+        active window. If it can't be confirmed foreground, ok=False.
+        """
+        r = self.focus_window(title_substring)
+        if not r.get("ok"):
+            return r
+        try:
+            import pygetwindow as gw
+            time.sleep(0.25)
+            active = gw.getActiveWindow()
+            active_title = (getattr(active, "title", "") or "")
+            if title_substring.lower() in active_title.lower():
+                return {"ok": True, "title": active_title, "foreground": True}
+            return {
+                "ok": False,
+                "error": f"Window mil gayi lekin foreground nahi aayi (active: '{active_title}')",
+                "foreground": False,
+            }
+        except Exception:
+            # Can't verify — be honest rather than risk wrong-window typing
+            return {"ok": False, "error": "foreground verify nahi kar saka"}
 
     # ==================================================================
     # Combined workflows

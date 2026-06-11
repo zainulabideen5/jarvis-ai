@@ -21,6 +21,12 @@ _PS_HARD_BLOCK = (
     "format-volume", "format c:", "diskpart", "stop-computer",
     "restart-computer", "remove-item c:\\windows", "remove-item c:/windows",
     "reg delete hklm", "bcdedit", "cipher /w",
+    # Input-injection via PowerShell — antivirus (rightly) flags these as
+    # keylogger/SendKeys malware patterns. The engine must use the dedicated
+    # UIA tools (set_text / invoke_element / type_in_window) instead.
+    "sendkeys", "system.windows.forms", "add-type", "sendinput",
+    "windows.input", "[microsoft.visualbasic", "setcursorpos", "mouse_event",
+    "keybd_event",
 )
 
 
@@ -79,20 +85,34 @@ def ui_tree(window_title: str, control_type: str = "", name_contains: str = "") 
                     continue
                 if not name and ctype not in ("Edit", "Document"):
                     continue  # unnamed decoration — useless to the brain
-                elements.append({
+                entry = {
                     "type": ctype,
                     "name": name[:80],
                     "enabled": bool(info.enabled),
-                })
+                }
+                # For text fields, include the CURRENT value so the brain can
+                # actually verify what's typed (name alone isn't enough).
+                if ctype in ("Edit", "Document"):
+                    try:
+                        val = el.get_value()
+                        if val:
+                            entry["value"] = str(val)[:120]
+                    except Exception:
+                        pass
+                elements.append(entry)
                 if len(elements) >= MAX_TREE_ELEMENTS:
                     break
             except Exception:
                 continue
 
-        lines = [
-            f"{i}. [{e['type']}] {e['name']}" + ("" if e["enabled"] else " (disabled)")
-            for i, e in enumerate(elements)
-        ]
+        lines = []
+        for i, e in enumerate(elements):
+            line = f"{i}. [{e['type']}] {e['name']}"
+            if e.get("value"):
+                line += f"  value=\"{e['value']}\""
+            if not e["enabled"]:
+                line += " (disabled)"
+            lines.append(line)
         return {
             "ok": True,
             "window": window_title,
@@ -105,29 +125,67 @@ def ui_tree(window_title: str, control_type: str = "", name_contains: str = "") 
 
 
 def click_element(window_title: str, element_name: str, control_type: str = "Button") -> dict:
-    """Window ke element par click (naam se — ui_tree se naam lo)."""
+    """Element par click — SAFE (UIA Invoke pattern, bina mouse/foreground churaye)."""
     from app.services.laptop_control.laptop_native import LaptopNative
     if SecurityBlocker.is_app_blocked(window_title):
         return {"ok": False, "error": "blocked: sensitive app"}
-    return LaptopNative.get().uia_click(window_title, element_name, control_type)
+    return LaptopNative.get().uia_invoke(window_title, element_name, control_type)
 
 
-def type_text(text: str) -> dict:
-    """Foreground window mein type karo (pehle focus_window zaroor)."""
+def set_text(window_title: str, element_name: str, text: str, control_type: str = "Edit") -> dict:
+    """Kisi field mein text daalo — SAFE (UIA ValuePattern, keystrokes nahi).
+
+    Yeh PREFERRED tareeqa hai text daalne ka: user ki active window mein leak
+    nahi hota aur antivirus flag nahi karta. element_name ui_tree se lo.
+    """
     from app.services.laptop_control.laptop_native import LaptopNative
+    if SecurityBlocker.is_app_blocked(window_title):
+        return {"ok": False, "error": "blocked: sensitive app"}
     if SecurityBlocker.has_sensitive_keyword(text):
         return {"ok": False, "error": "blocked: sensitive content (password/pin/otp)"}
-    return LaptopNative.get().type_text(text)
+    return LaptopNative.get().uia_type(window_title, element_name, text, control_type)
 
 
-def press_keys(keys: list) -> dict:
-    """Hotkey ya single key. E.g. ["ctrl","l"], ["enter"], ["win","r"]."""
+def type_in_window(window_title: str, text: str) -> dict:
+    """Keyboard se type karo — SIRF jab set_text na chale (rich editors).
+
+    Pehle target window ko foreground laata + VERIFY karta hai; agar foreground
+    confirm na ho to type NAHI karta (taake user ki apni window mein keys leak
+    na hon). window_title zaroori hai — blind typing allowed nahi.
+    """
+    from app.services.laptop_control.laptop_native import LaptopNative
+    if not window_title:
+        return {"ok": False, "error": "window_title zaroori hai — blind typing safe nahi"}
+    if SecurityBlocker.is_app_blocked(window_title):
+        return {"ok": False, "error": "blocked: sensitive app"}
+    if SecurityBlocker.has_sensitive_keyword(text):
+        return {"ok": False, "error": "blocked: sensitive content (password/pin/otp)"}
+    nat = LaptopNative.get()
+    fg = nat.focus_and_verify(window_title)
+    if not fg.get("ok"):
+        return {"ok": False, "error": f"safe type fail: {fg.get('error')}"}
+    return nat.type_text(text)
+
+
+def press_keys(keys: list, window_title: str = "") -> dict:
+    """Hotkey/key. SAFE: agar window_title diya to use foreground laa kar verify
+    karke bhejta hai (warna user ki window mein keys ja sakti hain).
+    E.g. ["ctrl","l"], ["enter"], ["win","r"]."""
     from app.services.laptop_control.laptop_native import LaptopNative
     if not keys:
         return {"ok": False, "error": "keys khali hai"}
+    nat = LaptopNative.get()
+    # Global hotkeys (win/ctrl+esc style) may legitimately have no window;
+    # but app-level keys must target a verified-foreground window.
+    if window_title:
+        if SecurityBlocker.is_app_blocked(window_title):
+            return {"ok": False, "error": "blocked: sensitive app"}
+        fg = nat.focus_and_verify(window_title)
+        if not fg.get("ok"):
+            return {"ok": False, "error": f"safe keys fail: {fg.get('error')}"}
     if len(keys) == 1:
-        return LaptopNative.get().press_key(keys[0])
-    return LaptopNative.get().hotkey(*keys)
+        return nat.press_key(keys[0])
+    return nat.hotkey(*keys)
 
 
 def open_app(name: str) -> dict:
@@ -240,7 +298,8 @@ TOOLS = {
     "focus_window": focus_window,
     "ui_tree": ui_tree,
     "click_element": click_element,
-    "type_text": type_text,
+    "set_text": set_text,
+    "type_in_window": type_in_window,
     "press_keys": press_keys,
     "open_app": open_app,
     "close_app": close_app,
@@ -253,15 +312,16 @@ TOOLS = {
 
 TOOLS_DOC = """
 - list_windows {} — saari khuli windows ke titles
-- focus_window {"title": "..."} — window foreground mein lao (typing/click se PEHLE)
+- focus_window {"title": "..."} — window foreground mein lao
 - ui_tree {"window_title": "...", "control_type": "?", "name_contains": "?"} — window ke elements dekho (AI ki aankhein). Buttons/Edits/MenuItems sab naam ke saath
-- click_element {"window_title": "...", "element_name": "...", "control_type": "Button|MenuItem|Edit|Hyperlink|TabItem|ListItem"} — element par click
-- type_text {"text": "..."} — foreground mein type karo
-- press_keys {"keys": ["ctrl","l"]} — hotkey/single key (enter, tab, win, esc, f5...)
-- open_app {"name": "chrome|notepad|excel|..."} — app launch
+- click_element {"window_title": "...", "element_name": "...", "control_type": "Button|MenuItem|Hyperlink|TabItem|ListItem"} — element activate (SAFE: UIA invoke, mouse churaye bina)
+- set_text {"window_title": "...", "element_name": "...", "text": "...", "control_type": "Edit"} — field mein text daalo. YEH PREFERRED hai text ke liye — keyboard nahi chalata, user ki window mein leak nahi hota, antivirus flag nahi karta
+- type_in_window {"window_title": "...", "text": "..."} — keyboard se type, SIRF jab set_text na chale (rich editors). Window ko verify-foreground laa kar type karta hai
+- press_keys {"keys": ["ctrl","l"], "window_title": "..."} — hotkey/key (enter, tab, esc, f5). App-level keys ke liye window_title do taake sahi window mein jayein
+- open_app {"name": "chrome|teams|notepad|excel|..."} — app launch
 - close_app {"name": "..."} — app band
 - open_url {"url": "https://..."} — user ke default browser mein URL
-- powershell {"command": "..."} — files/system ka sab kaam (rename, move, list, create...)
+- powershell {"command": "..."} — files/system ka sab kaam (rename, move, list, create). Input-injection (SendKeys) BLOCKED hai — typing ke liye set_text/type_in_window use karo
 - find_files {"query": "...", "location": "Desktop?"} — file dhundo
 - screenshot_check {"query": "..."} — LAST RESORT vision (sirf jab ui_tree fail ho)
 - wait {"seconds": 2} — load hone ka intezar

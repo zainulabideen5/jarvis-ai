@@ -159,6 +159,9 @@ class ChatService:
         self._pending_lock = asyncio.Lock()
         self._laptop = None
         self._screen_aware = None
+        # When the engine asks a clarifying question, we park its transcript
+        # here; the user's next message resumes the task from that point.
+        self._engine_session: dict | None = None
 
     def _get_client(self) -> LLMClient:
         if self._client is None:
@@ -388,6 +391,27 @@ class ChatService:
                 "reply": verification_result["reply"],
                 "actions": actions_payload,
             }
+
+        # RESUME a paused engine task — if the engine asked a clarifying
+        # question last turn, this message is the answer. Continue from there.
+        # (A clear "cancel"/"chodo" abandons the paused task.)
+        if self._engine_session is not None:
+            msg_lower_stripped = user_message.strip().lower()
+            if msg_lower_stripped in ("cancel", "chodo", "rehne do", "nahi", "no", "stop"):
+                self._engine_session = None
+                reply = "Theek hai Boss, woh task chhod diya."
+                await self._save_message("assistant", reply, "[]")
+                return {"reply": reply, "actions": []}
+            session = self._engine_session
+            self._engine_session = None
+            engine_result = await self._run_engine_task(
+                user_message, resume_transcript=session.get("transcript")
+            )
+            await self._save_message(
+                "assistant", engine_result["reply"],
+                json.dumps(engine_result.get("actions", [])),
+            )
+            return engine_result
 
         # ENGINE-FIRST for compound / in-app tasks. The legacy intent path is
         # great at atomic commands (open app, find file) but mis-handles
@@ -953,16 +977,8 @@ class ChatService:
                 pending = self._pending_actions.pop(confirm_token, None)
             if pending is not None:
                 if is_yes:
-                    self._remember_approved_recipient(pending)
-                    result = await self._execute_pending(pending)
-                    return {
-                        "reply": f"✅ {result.get('message', 'Done')}",
-                        "actions": [result],
-                    }
-                return {
-                    "reply": "Theek hai, cancel kar diya.",
-                    "actions": [],
-                }
+                    return await self._confirm_and_run(pending)
+                return {"reply": "Theek hai, cancel kar diya.", "actions": []}
 
         # Auto-detect confirmation reply (user typed "yes"/"no" without token)
         if is_yes or is_no:
@@ -975,16 +991,8 @@ class ChatService:
                     pending = None
             if pending is not None:
                 if is_yes:
-                    self._remember_approved_recipient(pending)
-                    result = await self._execute_pending(pending)
-                    return {
-                        "reply": f"✅ {result.get('message', 'Done')}",
-                        "actions": [result],
-                    }
-                return {
-                    "reply": "Theek hai, cancel kar diya.",
-                    "actions": [],
-                }
+                    return await self._confirm_and_run(pending)
+                return {"reply": "Theek hai, cancel kar diya.", "actions": []}
 
         # Detect intent — pass recent history + structured recent send-actions so
         # pronouns ("is ko", "wahi") and implicit platform ("again", "phir") resolve
@@ -1203,12 +1211,17 @@ class ChatService:
         task: str,
         attachments: list[str] | None = None,
         needs_confirm: bool = False,
+        resume_transcript: list[dict] | None = None,
     ) -> dict:
-        """Run (or queue for confirmation) a task on the universal engine."""
-        if attachments:
+        """Run (or queue/resume) a task on the universal engine.
+
+        resume_transcript: continue a paused task after the user answered an
+            engine clarifying question. `task` is then the user's answer.
+        """
+        if attachments and not resume_transcript:
             task = f"{task}\n(User ne yeh files attach ki hain: {', '.join(attachments)})"
 
-        if needs_confirm:
+        if needs_confirm and not resume_transcript:
             token = f"confirm_{secrets.token_urlsafe(16)}"
             pending = {"action": "universal_task", "params": {"task": task}}
             async with self._pending_lock:
@@ -1224,7 +1237,17 @@ class ChatService:
             }
 
         from app.services.universal_engine.engine import UniversalEngine
-        result = await UniversalEngine.get().run(task)
+        result = await UniversalEngine.get().run(task, transcript=resume_transcript)
+
+        # Engine needs more info — park the session and ask the user.
+        if result.get("needs_input"):
+            self._engine_session = {"transcript": result.get("transcript")}
+            return {
+                "reply": f"🤔 {result.get('question', 'Thodi aur detail chahiye, Boss.')}",
+                "actions": [],
+                "awaiting_input": True,
+            }
+
         icon = "✅" if result.get("ok") else "❌"
         return {
             "reply": f"{icon} {result.get('reply', '')}",
@@ -1238,18 +1261,21 @@ class ChatService:
             ],
         }
 
-    async def _execute_pending(self, pending: dict) -> dict:
-        """Execute a confirmed pending action — engine task ya controller action."""
+    async def _confirm_and_run(self, pending: dict) -> dict:
+        """User ne pending action confirm kiya — chala kar chat-reply do.
+
+        Engine tasks (universal_task) ask/resume/steps support karte hain;
+        baqi controller actions purane tareeqe se.
+        """
+        self._remember_approved_recipient(pending)
         if pending.get("action") == "universal_task":
             task = pending.get("params", {}).get("task", "")
-            from app.services.universal_engine.engine import UniversalEngine
-            result = await UniversalEngine.get().run(task)
-            return {
-                "action": "universal_task",
-                "status": "success" if result.get("ok") else "failed",
-                "message": result.get("reply", ""),
-            }
-        return await self._laptop.execute(pending)
+            return await self._run_engine_task(task)  # full ask/result handling
+        result = await self._laptop.execute(pending)
+        return {
+            "reply": f"✅ {result.get('message', 'Done')}",
+            "actions": [result],
+        }
 
     @staticmethod
     def _remember_approved_recipient(action: dict) -> None:

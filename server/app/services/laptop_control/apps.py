@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 
@@ -35,16 +36,65 @@ APP_ALIASES = {
     "whatsapp web": "https://web.whatsapp.com",
 }
 
+# Modern Store/UWP apps don't launch by exe name — use their protocol URI.
+# os.startfile on the protocol is the most reliable way to launch them.
+APP_PROTOCOLS = {
+    "teams": ["msteams:", "ms-teams:"],
+    "whatsapp": ["whatsapp:"],
+    "spotify": ["spotify:"],
+}
+
 
 class AppController:
     """Control apps on the laptop."""
+
+    # Generic brand words that must NOT decide a match — "Microsoft" appears
+    # in Teams, Edge, Word, Excel, Outlook, etc., so matching on it is wrong.
+    _BRAND_STOPWORDS = {"microsoft", "google", "mozilla", "ms", "the", "app"}
+
+    @staticmethod
+    def _canonical_key(name: str) -> str:
+        """Map a free-form app name to a known alias key.
+
+        Handles the LLM passing display names like "Microsoft Teams" or
+        "Google Chrome" instead of the short key. Priority:
+          1. exact key match
+          2. an alias KEY appears as a word in the name (strongest signal)
+          3. distinctive (non-brand) display-name word overlap
+        """
+        key = (name or "").lower().strip()
+        if key in APP_ALIASES:
+            return key
+
+        words = [w for w in key.replace(".exe", "").split() if w]
+        word_set = set(words)
+
+        # 2. alias key present as a whole word / substring — "teams" in
+        # "microsoft teams" wins over any brand-word overlap.
+        for alias_key in APP_ALIASES:
+            if alias_key in word_set or alias_key == key:
+                return alias_key
+        for alias_key in APP_ALIASES:
+            if alias_key in key:
+                return alias_key
+
+        # 3. distinctive display-name word overlap (brand words excluded)
+        distinctive = word_set - AppController._BRAND_STOPWORDS
+        for alias_key, target in APP_ALIASES.items():
+            candidates = target if isinstance(target, list) else [str(target)]
+            for cand in candidates:
+                cand_words = set(cand.lower().replace(".exe", "").split())
+                cand_words -= AppController._BRAND_STOPWORDS
+                if distinctive & cand_words:
+                    return alias_key
+        return key
 
     @staticmethod
     def resolve_app(name: str) -> tuple[str, bool]:
         """Resolve app name to launch target. Returns (target, is_url)."""
         if not name:
             return "", False
-        key = name.lower().strip()
+        key = AppController._canonical_key(name)
         target = APP_ALIASES.get(key)
         if target:
             if isinstance(target, str) and target.startswith("http"):
@@ -67,31 +117,30 @@ class AppController:
                 webbrowser.open(target)
                 return True, f"Browser mein {name} khol di"
 
-            # Special handling for Microsoft Store apps (Teams, WhatsApp)
-            key = name.lower().strip()
-            if key == "teams":
-                # Try multiple methods for Teams (Store version vs classic)
-                for cmd in [
-                    ["start", "msteams:"],  # Modern Teams URI scheme
-                    ["start", "ms-teams:"],
-                ]:
+            key = AppController._canonical_key(name)
+
+            # Modern Store/UWP apps (Teams, WhatsApp, Spotify) — launch via
+            # protocol URI using os.startfile (most reliable on Windows).
+            if key in APP_PROTOCOLS:
+                for proto in APP_PROTOCOLS[key]:
                     try:
-                        subprocess.Popen(cmd, shell=True)
-                        time.sleep(0.5)
-                        return True, "Teams khol di"
-                    except Exception:
+                        os.startfile(proto)  # type: ignore[attr-defined]
+                        time.sleep(1.0)
+                        return True, f"{key.title()} khol di"
+                    except OSError:
                         continue
+                # Protocol failed — fall through to exe/start attempts below
 
-            if key == "whatsapp":
-                try:
-                    subprocess.Popen(["start", "whatsapp:"], shell=True)
-                    time.sleep(0.5)
-                    return True, "WhatsApp khol di"
-                except Exception:
-                    pass
+            # Try direct exe launch via os.startfile (resolves AppPaths registry)
+            try:
+                os.startfile(target)  # type: ignore[attr-defined]
+                time.sleep(0.5)
+                return True, f"{name} khol di"
+            except OSError:
+                pass
 
-            # Default: shell start command (most apps register their executable name in PATH or AppPaths registry)
-            subprocess.Popen(["start", "", target], shell=True)
+            # Last resort: shell `start` (PATH / AppPaths lookup)
+            subprocess.Popen(f'start "" "{target}"', shell=True)
             time.sleep(0.5)
             return True, f"{name} khol di"
         except Exception as e:

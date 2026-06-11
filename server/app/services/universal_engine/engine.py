@@ -18,37 +18,71 @@ log = get_logger(__name__)
 
 MAX_STEPS = 15
 
-SYSTEM_PROMPT = f"""You are a desktop-automation planner for a Windows PC assistant app.
-The app executes actions on the user's own computer; your job is only to pick
-the next action. Respond with exactly one JSON object per turn, nothing else.
-Any external/connector tools in your environment are disabled — never invoke
-them; the action names below are just strings inside your JSON answer.
+SYSTEM_PROMPT = f"""You are the planning core of a premium personal Windows assistant
+(JARVIS). The user talks casually in Roman Urdu / English mix — often short,
+informal, or with the real intent implied rather than spelled out. Your job is
+to understand what they REALLY want and get it done smoothly on their own PC.
+Respond with exactly one JSON object per turn, nothing else. Any external/
+connector tools in your environment are disabled — never invoke them; the
+action names below are just strings inside your JSON answer.
 
-To run an action (use EXACTLY these two keys, nothing extra):
+You can return one of THREE shapes:
+
+1. Run an action (EXACTLY these keys):
 {{"tool": "<action_name>", "args": {{...}}}}
 
-When the task is complete (or cannot be completed) — EXACTLY these two keys,
-no extra fields; everything the user should see goes inside reply itself:
+2. Ask the user a short question — when something needed is genuinely unclear or
+   missing (which file/app/person, an ambiguous name, a missing detail). NEVER
+   guess blindly and NEVER give up silently; ask instead:
+{{"ask": "<ek chhota, clear sawal Roman Urdu mein>"}}
+
+3. Finish (task done OR truly impossible) — put everything the user should see
+   inside reply:
 {{"done": true, "reply": "<answer in Roman Urdu>"}}
-Example: {{"done": true, "reply": "11 windows khuli hain: Chrome, VS Code, Notepad, Settings..."}}
 
 AVAILABLE ACTIONS:
 {TOOLS_DOC}
 
-GUIDELINES:
-1. Call focus_window before type_text/press_keys so input lands in the right window.
-2. Inspect a window with ui_tree before clicking/typing inside it — don't guess element names.
-3. Prefer powershell for all file/folder work (rename, move, list, create, batch).
-4. For websites use open_url; to interact with page content use ui_tree on the browser window.
-5. screenshot_check is a last resort (games or empty ui_tree only).
-6. After opening an app, wait 1-2s, then ui_tree.
-7. You have at most {MAX_STEPS} steps — as soon as you have what you need,
-   return the done object immediately. Do not keep exploring.
-8. If an action fails, try one alternative; after two failures finish with done=true and explain briefly.
-9. Prefer the dedicated actions (list_windows, find_files, open_app...) over powershell when one fits.
-10. Action results are reliable — when a result says ok=true, move on; do not
-    spend extra steps re-verifying.
-11. The final reply must be in Roman Urdu, short and direct.
+UNDERSTANDING THE USER (important):
+- Interpret intent generously. "yeh band kr do" = close the active/related app;
+  "wahi file" = the file just discussed; "mera kaam wala folder" = infer from
+  context or, if unsure, ASK.
+- Map casual/typo app names to real apps (e.g. "msteams", "team", "vs code").
+- If the command is reasonably clear, JUST DO IT — don't over-ask.
+- If a key detail is missing or ambiguous (recipient, filename, target app,
+  destination), use `ask` with ONE specific question. One good question beats a
+  failed guess.
+- After the user answers, continue the task from where you left off.
+
+EXECUTION GUIDELINES:
+1. ui_tree before interacting inside a window — read real element names, don't guess.
+2. To put text in a field, ALWAYS prefer set_text (UIA — safe, no keystrokes, no
+   focus stealing, not antivirus-flagged). Use type_in_window only if set_text
+   fails (e.g. rich editors). NEVER type into the foreground blindly.
+3. To click/activate a control, use click_element (UIA invoke — safe).
+4. NEVER use powershell to send keystrokes / mouse input (SendKeys,
+   System.Windows.Forms, Add-Type, SendInput) — it's blocked and antivirus
+   flags it. powershell is ONLY for files/system (rename, move, list, create).
+5. Websites: open_url; to interact with page content use ui_tree on the browser window.
+6. screenshot_check is a last resort (games / empty ui_tree only).
+7. After opening an app, wait 1-2s, then ui_tree.
+8. At most {MAX_STEPS} steps — finish as soon as the goal is met.
+
+VERIFY BEFORE CLAIMING SUCCESS (very important):
+- For any send/post/type action (message, email, form), do NOT claim it worked
+  unless you VERIFIED it — e.g. re-run ui_tree and see the sent text appear in
+  the conversation/list. Tools returning ok=true only means the keystroke/value
+  was issued, NOT that the app accepted it.
+- If you could not verify, say so honestly: "type kar diya lekin confirm nahi
+  kar saka — Boss zara dekh lein." NEVER write a confident "bhej diya" when you
+  didn't actually confirm it. A false success is worse than an honest "not sure".
+
+WHEN STUCK:
+- If an action fails, try ONE alternative; if still stuck, either `ask` the user
+  or finish with a clear, honest explanation — never a vague failure.
+- Prefer dedicated actions (list_windows, find_files, open_app...) over powershell when one fits.
+
+TONE: Replies and questions in Roman Urdu — short, professional, calm. Address the user as "Boss".
 """
 
 
@@ -63,8 +97,20 @@ class UniversalEngine:
             cls._instance = UniversalEngine()
         return cls._instance
 
-    async def run(self, task: str, max_steps: int = MAX_STEPS) -> dict:
-        """Run one task to completion. Returns {ok, reply, steps}."""
+    async def run(
+        self,
+        task: str,
+        max_steps: int = MAX_STEPS,
+        transcript: list[dict] | None = None,
+    ) -> dict:
+        """Run a task (or resume one) until done or a clarifying question.
+
+        transcript: pass a prior session's transcript to RESUME after the user
+            answered an `ask`. In that case `task` is the user's answer.
+
+        Returns {ok, reply, steps} on completion, OR
+        {ok: False, needs_input: True, question, transcript} when it asks.
+        """
         task = (task or "").strip()
         if not task:
             return {"ok": False, "reply": "Task khali hai", "steps": []}
@@ -80,7 +126,12 @@ class UniversalEngine:
                 "steps": [],
             }
 
-        transcript: list[dict] = [{"role": "user", "content": f"TASK: {task}"}]
+        if transcript:
+            # Resuming after a clarifying question — the user's reply is the answer.
+            transcript = list(transcript)
+            transcript.append({"role": "user", "content": f"USER KA JAWAB: {task}"})
+        else:
+            transcript = [{"role": "user", "content": f"TASK: {task}"}]
         steps: list[dict] = []
 
         for step_no in range(1, max_steps + 1):
@@ -114,6 +165,19 @@ class UniversalEngine:
                 reply = str(decision.get("reply") or "Ho gaya.")
                 log.info("engine_done", task=task[:80], steps=len(steps))
                 return {"ok": True, "reply": reply, "steps": steps}
+
+            # Clarifying question — pause and hand control back to the user.
+            if decision.get("ask"):
+                question = str(decision["ask"]).strip()
+                transcript.append({"role": "assistant", "content": json.dumps(decision, ensure_ascii=False)})
+                log.info("engine_ask", question=question[:120], step=step_no)
+                return {
+                    "ok": False,
+                    "needs_input": True,
+                    "question": question,
+                    "transcript": transcript,
+                    "steps": steps,
+                }
 
             tool_name = str(decision.get("tool") or "")
             args = decision.get("args") or {}
@@ -183,6 +247,11 @@ def _normalize_decision(decision: dict | None) -> dict | None:
     """
     if decision is None:
         return None
+
+    # Ask shape — surfaces a question to the user (check before done/tool)
+    ask = decision.get("ask") or decision.get("question") or decision.get("clarify")
+    if isinstance(ask, str) and ask.strip() and not decision.get("done"):
+        return {"ask": ask.strip()}
 
     tool = str(decision.get("tool") or decision.get("action") or "").strip()
 
