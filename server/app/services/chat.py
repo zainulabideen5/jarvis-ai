@@ -552,6 +552,17 @@ class ChatService:
 
                 reply = "".join(clean_reply_parts).strip()
 
+            # CLEANUP: the conversational LLM sometimes leaks a bare ```json
+            # action block (e.g. {"action":"send_message",...}) — that's raw
+            # clutter to the user. Strip ALL fenced blocks; if one is a
+            # send/message action, route it to the engine so it actually runs.
+            stripped, leaked = self._strip_action_code_blocks(reply)
+            if leaked is not None:
+                reply = stripped or ""
+                engine_res = await self._run_engine_task(self._leaked_action_to_task(leaked))
+                reply = (reply + "\n\n" + engine_res.get("reply", "")).strip()
+                actions.extend(engine_res.get("actions", []))
+
             # Add memory-saved confirmation if applicable
             if saved_memory:
                 reply = f"🧠 Yaad rakh liya: *{saved_memory['content']}*\n\n{reply}"
@@ -1205,6 +1216,46 @@ class ChatService:
         return await self._run_engine_task(
             user_message, attachments, needs_confirm=needs_confirm
         )
+
+    @staticmethod
+    def _strip_action_code_blocks(reply: str):
+        """Remove any fenced code block that is JSON containing an 'action'.
+
+        Returns (cleaned_reply, leaked_action_or_None). Keeps the FIRST such
+        action found (so we can route it to the engine); strips all of them
+        from the visible text so raw JSON never reaches the user.
+        """
+        import re as _re
+        if "```" not in (reply or ""):
+            return reply, None
+        leaked = None
+        def _repl(m):
+            nonlocal leaked
+            body = m.group(1).strip()
+            # drop a leading language tag like "json"
+            if "\n" in body:
+                first, rest = body.split("\n", 1)
+                if first.strip().lower() in ("json", "action"):
+                    body = rest.strip()
+            try:
+                obj = json.loads(body)
+                if isinstance(obj, dict) and ("action" in obj or "platform" in obj):
+                    if leaked is None:
+                        leaked = obj
+                    return ""  # strip it
+            except (json.JSONDecodeError, ValueError):
+                pass
+            return m.group(0)  # not an action block — leave as-is
+        cleaned = _re.sub(r"```(.*?)```", _repl, reply, flags=_re.DOTALL)
+        return cleaned.strip(), leaked
+
+    @staticmethod
+    def _leaked_action_to_task(action: dict) -> str:
+        """Turn a leaked {action:send_message,...} dict into an engine task."""
+        platform = (action.get("platform") or "").strip() or "the app"
+        to = (action.get("to") or action.get("recipient") or "").strip()
+        msg = (action.get("message") or action.get("body") or action.get("text") or "").strip()
+        return f"{platform} pe '{to}' ko yeh message bhejo: {msg}"
 
     async def _run_engine_task(
         self,

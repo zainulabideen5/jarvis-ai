@@ -383,13 +383,24 @@ def _claims_success(reply: str) -> bool:
 
 
 def _text_present_in_window(window_title: str, text: str) -> bool:
-    """Re-read the window and check the typed text actually appears in it."""
+    """Check the typed text actually appears in the window after sending.
+
+    Uses a name_contains FILTER so it scans ALL elements (a plain ui_tree caps
+    at ~120, and a chat app's just-sent message sits past that cap → false
+    negative). The filter matches across the whole tree.
+    """
+    needle = text.strip()[:40]
+    if not needle:
+        return False
     try:
         from app.services.universal_engine import tools
-        tree = tools.ui_tree(window_title)
-        hay = (tree.get("elements", "") or "").lower()
-        needle = text.strip()[:40].lower()
-        return bool(needle) and needle in hay
+        # Filtered scan — finds the message even in a long conversation.
+        tree = tools.ui_tree(window_title, name_contains=needle)
+        if needle.lower() in (tree.get("elements", "") or "").lower():
+            return True
+        # Fallback: full scan (covers short lists / native fields)
+        tree2 = tools.ui_tree(window_title)
+        return needle.lower() in (tree2.get("elements", "") or "").lower()
     except Exception:
         return False
 
