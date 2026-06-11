@@ -158,12 +158,13 @@ def set_text(window_title: str, element_name: str, text: str, control_type: str 
     return LaptopNative.get().uia_type(window_title, element_name, text, control_type)
 
 
-def type_in_window(window_title: str, text: str) -> dict:
-    """Keyboard se type karo — SIRF jab set_text na chale (rich editors).
+def type_in_window(window_title: str, text: str, element_name: str = "") -> dict:
+    """Keyboard se type karo — chat apps (Teams/WhatsApp) ke message box ke liye.
 
-    Pehle target window ko foreground laata + VERIFY karta hai; agar foreground
-    confirm na ho to type NAHI karta (taake user ki apni window mein keys leak
-    na hon). window_title zaroori hai — blind typing allowed nahi.
+    element_name DO (jaise "Type a message") — woh box ko UIA se FOCUS karega
+    phir type karega (WebView apps mein click se focus nahi milta). Agar
+    element_name na do to poori window focus karke type karta hai. Dono soorat
+    mein foreground verify hota hai — user ki window mein keys leak nahi hote.
     """
     from app.services.laptop_control.laptop_native import LaptopNative
     if not window_title:
@@ -173,9 +174,18 @@ def type_in_window(window_title: str, text: str) -> dict:
     if SecurityBlocker.has_sensitive_keyword(text):
         return {"ok": False, "error": "blocked: sensitive content (password/pin/otp)"}
     nat = LaptopNative.get()
-    fg = nat.focus_and_verify(window_title)
-    if not fg.get("ok"):
-        return {"ok": False, "error": f"safe type fail: {fg.get('error')}"}
+    if element_name:
+        # Focus the specific control (gives the caret to it — reliable on WebView)
+        fe = nat.focus_element(window_title, element_name)
+        if not fe.get("ok"):
+            # fall back to window focus
+            fg = nat.focus_and_verify(window_title)
+            if not fg.get("ok"):
+                return {"ok": False, "error": f"focus fail: {fe.get('error')}"}
+    else:
+        fg = nat.focus_and_verify(window_title)
+        if not fg.get("ok"):
+            return {"ok": False, "error": f"safe type fail: {fg.get('error')}"}
     return nat.type_text(text)
 
 

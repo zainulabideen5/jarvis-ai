@@ -69,9 +69,10 @@ ui_tree mein dikhe usi exact text se. Kuch hardcode mat samjho.)
 3. Click ke baad ui_tree DOBARA (bina filter) → message likhne wala box dhoondo
    (Edit/Document, aksar "Type a message" / "Type a new message" / "Message").
 4. MESSAGE BOX MEIN LIKHNA — chat apps (Teams/WhatsApp/Slack) WebView hote hain,
-   inke compose box par set_text aksar KAAM NAHI karta. Isliye:
-     a. Pehle us message box par click_element karo (focus ke liye).
-     b. Phir type_in_window {{"window_title":"<asli title>", "text":"<message>"}}.
+   inke compose box par set_text aur sirf-click se focus KAAM NAHI karta. Sahi
+   tareeqa: type_in_window mein box ka naam DO taake woh seedha focus kare:
+     type_in_window {{"window_title":"<asli title>", "element_name":"<box ka naam
+     jaise 'Type a message' / 'Type a new message'>", "text":"<message>"}}
    (set_text sirf NATIVE fields ke liye — Notepad, dialogs, normal Edit boxes.)
 5. Send: press_keys {{"keys":["enter"], "window_title":"<window ka asli title>"}}
    (ya "Send" button ho to click_element).
@@ -205,6 +206,7 @@ class UniversalEngine:
         looked = False          # has ui_tree/list_windows been run yet?
         ask_rejections = 0      # how many premature asks we've pushed back on
         action_sig_counts: dict[str, int] = {}  # detect repeated send loops
+        typed: dict | None = None   # last text typed + its window (for verify)
 
         for step_no in range(1, max_steps + 1):
             raw = None
@@ -235,6 +237,26 @@ class UniversalEngine:
 
             if decision.get("done"):
                 reply = str(decision.get("reply") or "Ho gaya.")
+                # ANTI-LIE GUARD: if the model claims it sent/typed something,
+                # verify the text actually shows up in the window before we
+                # report success. Catches the "bhej diya" lie when typing
+                # silently failed (e.g. focus didn't land on a WebView box).
+                if typed and _claims_success(reply):
+                    present = await asyncio.to_thread(
+                        _text_present_in_window, typed["window"], typed["text"]
+                    )
+                    if not present:
+                        log.warning("engine_unverified_send", window=typed["window"])
+                        return {
+                            "ok": False,
+                            "reply": (
+                                f"⚠️ Boss, \"{typed['text'][:50]}\" type to kiya lekin "
+                                "confirm NAHI kar paya ke woh actually chat/box mein "
+                                "gaya — ho sakta hai na gaya ho. Zara khud dekh lein. "
+                                "(Main jhoot nahi bolunga ke ho gaya jab pakka na ho.)"
+                            ),
+                            "steps": steps,
+                        }
                 log.info("engine_done", task=task[:80], steps=len(steps))
                 return {"ok": True, "reply": reply, "steps": steps}
 
@@ -309,6 +331,13 @@ class UniversalEngine:
                 except Exception as e:
                     result = {"ok": False, "error": str(e)[:300]}
 
+            # Track what got typed, so we can verify a "sent" claim later.
+            if tool_name in ("set_text", "type_in_window") and result.get("ok"):
+                txt = str(args.get("text") or "")
+                win = str(args.get("window_title") or "")
+                if txt and win:
+                    typed = {"window": win, "text": txt}
+
             log.info(
                 "engine_step",
                 step=step_no, tool=tool_name,
@@ -339,6 +368,30 @@ class UniversalEngine:
             "reply": f"{max_steps} steps mein task poora nahi hua — task chhota karke dobara try karo.",
             "steps": steps,
         }
+
+
+_SUCCESS_WORDS = ("bhej diya", "bhej di", "send kar diya", "send kr diya", "ho gaya",
+                  "kar diya", "sent", "type kar diya", "likh diya", "daal diya")
+
+
+def _claims_success(reply: str) -> bool:
+    low = (reply or "").lower()
+    # If it already hedges ("confirm nahi", "shayad", "nahi kar"), don't double-flag.
+    if any(h in low for h in ("confirm nahi", "nahi kar paya", "nahi kar saka", "shayad", "pakka nahi")):
+        return False
+    return any(w in low for w in _SUCCESS_WORDS)
+
+
+def _text_present_in_window(window_title: str, text: str) -> bool:
+    """Re-read the window and check the typed text actually appears in it."""
+    try:
+        from app.services.universal_engine import tools
+        tree = tools.ui_tree(window_title)
+        hay = (tree.get("elements", "") or "").lower()
+        needle = text.strip()[:40].lower()
+        return bool(needle) and needle in hay
+    except Exception:
+        return False
 
 
 def _filter_args(fn, args: dict) -> dict:

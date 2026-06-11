@@ -369,6 +369,40 @@ class LaptopNative:
         except Exception as e:
             return {"ok": False, "error": str(e)[:200]}
 
+    def focus_element(self, window_title: str, element_name: str, control_type: str = "") -> dict:
+        """Give KEYBOARD focus to a specific control via UIA SetFocus.
+
+        Clicking (Invoke) a textbox does NOT give it typing focus on WebView
+        apps like Teams — so keystrokes go nowhere. SetFocus puts the caret
+        inside the box. Returns ok + whether the window is now foreground.
+        """
+        try:
+            window = self._find_window(window_title)
+            if window is None:
+                return {"ok": False, "error": f"window '{window_title}' nahi mili"}
+            target = None
+            for e in window.descendants():
+                try:
+                    info = e.element_info
+                    if control_type and (info.control_type or "").lower() != control_type.lower():
+                        continue
+                    nm = (info.name or "")
+                    if element_name.lower() in nm.lower():
+                        target = e
+                        break
+                except Exception:
+                    continue
+            if target is None:
+                return {"ok": False, "error": f"'{element_name}' element nahi mila"}
+            try:
+                target.set_focus()
+            except Exception as e:
+                return {"ok": False, "error": f"focus set nahi hua: {str(e)[:120]}"}
+            time.sleep(0.2)
+            return {"ok": True, "focused": target.window_text() or element_name}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200]}
+
     def focus_and_verify(self, title_substring: str) -> dict:
         """Focus a window AND confirm it actually became the active window.
 
