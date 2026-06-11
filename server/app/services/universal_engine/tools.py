@@ -72,38 +72,49 @@ def ui_tree(window_title: str, control_type: str = "", name_contains: str = "") 
             return {"ok": False, "error": f"window '{window_title}' nahi mili"}
         # Multiple matches: take the first (foreground-most) one
         win = matches[0]
+        descendants = win.descendants()
 
-        elements = []
-        for el in win.descendants():
-            try:
-                info = el.element_info
-                ctype = info.control_type or ""
-                name = (info.name or "").strip()
-                if control_type and ctype.lower() != control_type.lower():
+        def _collect(ctype_filter: str, name_filter: str) -> list[dict]:
+            out = []
+            for el in descendants:
+                try:
+                    info = el.element_info
+                    ctype = info.control_type or ""
+                    name = (info.name or "").strip()
+                    if ctype_filter and ctype.lower() != ctype_filter.lower():
+                        continue
+                    if name_filter and name_filter.lower() not in name.lower():
+                        continue
+                    if not name and ctype not in ("Edit", "Document"):
+                        continue  # unnamed decoration — useless to the brain
+                    entry = {"type": ctype, "name": name[:80], "enabled": bool(info.enabled)}
+                    if ctype in ("Edit", "Document"):
+                        try:
+                            val = el.get_value()
+                            if val:
+                                entry["value"] = str(val)[:120]
+                        except Exception:
+                            pass
+                    out.append(entry)
+                    if len(out) >= MAX_TREE_ELEMENTS:
+                        break
+                except Exception:
                     continue
-                if name_contains and name_contains.lower() not in name.lower():
-                    continue
-                if not name and ctype not in ("Edit", "Document"):
-                    continue  # unnamed decoration — useless to the brain
-                entry = {
-                    "type": ctype,
-                    "name": name[:80],
-                    "enabled": bool(info.enabled),
-                }
-                # For text fields, include the CURRENT value so the brain can
-                # actually verify what's typed (name alone isn't enough).
-                if ctype in ("Edit", "Document"):
-                    try:
-                        val = el.get_value()
-                        if val:
-                            entry["value"] = str(val)[:120]
-                    except Exception:
-                        pass
-                elements.append(entry)
-                if len(elements) >= MAX_TREE_ELEMENTS:
-                    break
-            except Exception:
-                continue
+            return out
+
+        elements = _collect(control_type, name_contains)
+
+        # FORGIVING FALLBACK: if a filter matched nothing, the model probably
+        # guessed the control_type/name wrong (e.g. a contact is a "TreeItem"
+        # not a "ListItem"). Don't return an empty tree (that blinds the model
+        # and makes it ask the user) — return the FULL window instead with a note.
+        note = ""
+        if not elements and (control_type or name_contains):
+            elements = _collect("", "")
+            note = (
+                f"(filter control_type='{control_type}' name_contains='{name_contains}' "
+                f"se kuch nahi mila — neeche poori window hai, isme se sahi element chuno)"
+            )
 
         lines = []
         for i, e in enumerate(elements):
@@ -115,8 +126,9 @@ def ui_tree(window_title: str, control_type: str = "", name_contains: str = "") 
             lines.append(line)
         return {
             "ok": True,
-            "window": window_title,
+            "window": win.window_text(),
             "count": len(elements),
+            "note": note,
             "elements": _clip("\n".join(lines)),
             "truncated": len(elements) >= MAX_TREE_ELEMENTS,
         }

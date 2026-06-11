@@ -52,18 +52,32 @@ ne diya hi nahi). Warna ACT karo.
 AVAILABLE ACTIONS:
 {TOOLS_DOC}
 
-PLAYBOOK — kisi chat app (Teams/WhatsApp/Slack) mein message bhejna:
-1. ui_tree on the app window → poori list dekho (contacts, search, message box).
-2. Contact list mein us shaks ka naam dhoondo (TreeItem/ListItem jaise
-   "Chat Subhan Ansari Available"). Mil jaye to click_element us par.
-   Na mile to "Search"/"New message" box mein set_text se naam likho, ui_tree
-   se result dekho, sahi contact click_element karo.
-3. ui_tree dobara → message likhne wala box (Edit/"Type a message"/RichEdit) dhoondo.
-4. set_text us box mein message daalo (SAFE — keystroke nahi).
-5. Send: agar "Send" button hai to click_element; warna press_keys
-   {{"keys":["enter"], "window_title":"<app>"}}.
-6. ui_tree se CONFIRM karo ke message conversation mein nazar aa raha hai.
-   Tabhi done bolo. Na dikhe to honestly batao.
+PLAYBOOK — kisi chat app (Teams/WhatsApp/Slack) mein message bhejna.
+(Naam yahan SIRF misaal hain — asli naam jo user ne diya woh use karo, aur jo
+ui_tree mein dikhe usi exact text se. Kuch hardcode mat samjho.)
+1. PEHLA ui_tree BINA kisi filter ke chalao (sirf window_title do, control_type
+   aur name_contains KHALI). Poori window ek dafa dekho — control_type guess
+   mat karo, jo asli hai woh list mein nazar aayega.
+   NOTE: contact aksar [TreeItem]/[ListItem] hota hai jaise "Chat <NAAM> Available",
+   aur search aksar [ComboBox] "Search" hota hai.
+2. User ke diye naam ka contact list mein dhoondo (jo bhi naam ho). Dikhe to
+   SEEDHE click_element karo us par — EXACT name jo ui_tree mein likha hai
+   (jaise element_name="Chat <NAAM> Available", control_type="TreeItem").
+   Na dikhe TO "Search" ComboBox par click_element, phir type_in_window se naam
+   likho, ui_tree se result dekho, sahi contact click_element karo.
+3. Click ke baad ui_tree DOBARA (bina filter) → message likhne wala box dhoondo
+   (Edit/Document, aksar "Type a message" / "Type a new message" / "Message").
+4. MESSAGE BOX MEIN LIKHNA — chat apps (Teams/WhatsApp/Slack) WebView hote hain,
+   inke compose box par set_text aksar KAAM NAHI karta. Isliye:
+     a. Pehle us message box par click_element karo (focus ke liye).
+     b. Phir type_in_window {{"window_title":"<asli title>", "text":"<message>"}}.
+   (set_text sirf NATIVE fields ke liye — Notepad, dialogs, normal Edit boxes.)
+5. Send: press_keys {{"keys":["enter"], "window_title":"<window ka asli title>"}}
+   (ya "Send" button ho to click_element).
+6. ui_tree se CONFIRM karo ke bheja gaya message, message-list mein nazar aa raha
+   hai. Agar EK baar bhej kar verify fail ho, DOBARA-DOBARA mat bhejo (spam ho
+   jayega) — honestly batao ke confirm nahi hua. "bhej diya" tabhi likho jab
+   verify ho jaye.
 
 INTENT: casual/typo app names samjho ("msteams"→Teams, "wts app"→WhatsApp).
 After a user answer, continue from where you left off.
@@ -149,6 +163,7 @@ class UniversalEngine:
         steps: list[dict] = []
         looked = False          # has ui_tree/list_windows been run yet?
         ask_rejections = 0      # how many premature asks we've pushed back on
+        action_sig_counts: dict[str, int] = {}  # detect repeated send loops
 
         for step_no in range(1, max_steps + 1):
             raw = None
@@ -216,6 +231,26 @@ class UniversalEngine:
             args = decision.get("args") or {}
             if tool_name in ("ui_tree", "list_windows"):
                 looked = True
+
+            # LOOP GUARD: a repeated identical send/type action means verify
+            # keeps failing and the model is re-sending — which spams the
+            # recipient. After the 2nd repeat, stop and report honestly.
+            if tool_name in ("set_text", "type_in_window", "press_keys"):
+                sig = f"{tool_name}:{json.dumps(args, ensure_ascii=False, sort_keys=True)}"
+                action_sig_counts[sig] = action_sig_counts.get(sig, 0) + 1
+                if action_sig_counts[sig] >= 3:
+                    log.warning("engine_send_loop_aborted", tool=tool_name, step=step_no)
+                    return {
+                        "ok": False,
+                        "reply": (
+                            "Boss, message box mein likhne ki kayi koshish ki lekin "
+                            "confirm nahi kar paya ke message gaya — isliye baar-baar "
+                            "bhejne se rok diya (spam na ho). Zara khud dekh lein, ya "
+                            "dobara bolein to aur tareeqe se try karun."
+                        ),
+                        "steps": steps,
+                    }
+
             fn = TOOLS.get(tool_name)
 
             if fn is None:
