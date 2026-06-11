@@ -389,6 +389,25 @@ class ChatService:
                 "actions": actions_payload,
             }
 
+        # ENGINE-FIRST for compound / in-app tasks. The legacy intent path is
+        # great at atomic commands (open app, find file) but mis-handles
+        # multi-step or "type inside an app" tasks — e.g. "notepad kholo AUR
+        # usme likho X" used to match the file-open rule and only open a
+        # folder named "notepad". Such tasks need the universal engine, which
+        # actually drives the app via UIA. Destructive ones still confirm.
+        if self._needs_engine_first(user_message):
+            needs_confirm = any(
+                w in user_message.lower() for w in self._DESTRUCTIVE_WORDS
+            )
+            engine_result = await self._run_engine_task(
+                user_message, attachments, needs_confirm=needs_confirm
+            )
+            await self._save_message(
+                "assistant", engine_result["reply"],
+                json.dumps(engine_result.get("actions", [])),
+            )
+            return engine_result
+
         # RULE-BASED SEND CHECK FIRST — if user typed an obvious send command
         # (e.g. "PDF send kr da" with phone) we MUST treat it as a send action,
         # NOT as a screen-referential query. Earlier the word "pdf" triggered
@@ -1140,6 +1159,30 @@ class ChatService:
     def _looks_like_task(cls, message: str) -> bool:
         low = f" {message.strip().lower()} "
         return any(v in low for v in cls._TASK_VERBS)
+
+    # Strong signals that only the universal engine can handle: typing into an
+    # app, or a multi-step "do X and then Y" command. Sends (whatsapp/teams/
+    # email) are deliberately excluded — those keep their dedicated path.
+    _TYPING_VERBS = ("likho", "likh do", "likh de", "type karo", "type kar", "type kr")
+    _IN_APP_MARKERS = ("usme", "us me", "isme", "is me", "us mein", "is mein")
+    _SEND_WORDS = ("whatsapp", "whats app", "teams", "email", "gmail", "mail")
+
+    @classmethod
+    def _needs_engine_first(cls, message: str) -> bool:
+        low = f" {message.strip().lower()} "
+        if any(w in low for w in cls._SEND_WORDS):
+            return False  # sends keep their dedicated confirm path
+        # Typing into an app, or operating inside one
+        if any(v in low for v in cls._TYPING_VERBS):
+            return True
+        if any(m in low for m in cls._IN_APP_MARKERS) and cls._looks_like_task(message):
+            return True
+        # Multi-step: "X kholo aur/phir Y" with two task verbs around a joiner
+        if (" aur " in low or " phir " in low or " then " in low):
+            verb_hits = sum(1 for v in cls._TASK_VERBS if v in low)
+            if verb_hits >= 2:
+                return True
+        return False
 
     async def _maybe_engine_fallback(
         self, user_message: str, attachments: list[str] | None
