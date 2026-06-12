@@ -30,8 +30,9 @@ class ClaudeCLIBrain:
     a single completion back (no CLI-side tools, no agentic turns).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, model: str = "opus") -> None:
         self._exe = self._find_cli()
+        self._model = model
 
     @staticmethod
     def _find_cli() -> str | None:
@@ -60,6 +61,7 @@ class ClaudeCLIBrain:
             proc = subprocess.run(
                 [
                     self._exe, "-p",
+                    "--model", self._model,           # Opus 4.8 (smart)
                     "--output-format", "json",
                     # 3 turns: if the model slips and calls a (denied) tool,
                     # the denial bounces it back to plain text within budget.
@@ -149,18 +151,24 @@ class LLMBrain:
         return text
 
 
+# Which brain to use. Flip this one line to switch — nothing else changes.
+#   "cli"  → Claude CLI (Opus 4.8): smartest, but ~10-15s/step cold start
+#   "groq" → fast Groq/Cerebras stack (~1s/step), slightly less smart
+#   "api"  → (future) Anthropic API: fast + smart, needs paid key
+BRAIN_CHOICE = "cli"
+
 _brain = None
 
 
 def get_brain():
-    """Singleton brain.
-
-    Default = LLMBrain (fast Groq stack, already configured). Falls back to the
-    Claude CLI only if no LLM keys are set. To force the API/CLI later, swap
-    the instance created here — nothing else in the engine changes.
-    """
+    """Singleton brain. BRAIN_CHOICE selects the implementation."""
     global _brain
     if _brain is None:
-        llm = LLMBrain()
-        _brain = llm if llm.is_available() else ClaudeCLIBrain()
+        if BRAIN_CHOICE == "cli":
+            cli = ClaudeCLIBrain(model="opus")
+            # Fall back to Groq only if the CLI isn't installed.
+            _brain = cli if cli.is_available() else LLMBrain()
+        else:
+            llm = LLMBrain()
+            _brain = llm if llm.is_available() else ClaudeCLIBrain(model="opus")
     return _brain
