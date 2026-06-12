@@ -167,6 +167,83 @@ class UniversalEngine:
             cls._instance = UniversalEngine()
         return cls._instance
 
+    async def _run_tool(self, tool_name: str, args: dict) -> dict:
+        """Execute one tool call safely. Shared by normal loop + recipe replay."""
+        fn = TOOLS.get(tool_name)
+        if fn is None:
+            return {"ok": False, "error": f"unknown tool: {tool_name}. Valid: {', '.join(TOOLS)}"}
+        call_args = _filter_args(fn, args)
+        try:
+            return await asyncio.to_thread(lambda: fn(**call_args))
+        except TypeError as e:
+            return {"ok": False, "error": f"galat args: {e}"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:300]}
+
+    async def _try_replay(self, task: str, intent: str, recipe: list[dict]) -> dict | None:
+        """FAST PATH: adapt a saved recipe to this task in ONE planning call,
+        then run the steps without per-step thinking. Returns a result dict on
+        success, or None to signal 'fall back to normal step-by-step'."""
+        brain = get_brain()
+        sys_prompt = (
+            "Tum ek desktop-automation planner ho. Neeche ek SAVED RECIPE hai "
+            "(steps jo pichli dafa is tarah ke kaam mein chale). NAYE TASK ke "
+            "liye poora step-plan EK JSON ARRAY mein do — wahi structure, bas "
+            "variable cheezein (contact ka naam, message text) naye task ke "
+            "hisaab se update karo. Contact ke liye sirf naam do (poora UI label "
+            "nahi — system khud match kar lega). Sirf JSON array do, aur kuch nahi.\n"
+            "Har step: {\"tool\":\"<name>\",\"args\":{...}}.\n\n"
+            f"SAVED RECIPE:\n{json.dumps(recipe, ensure_ascii=False)}"
+        )
+        try:
+            raw = await asyncio.to_thread(
+                brain.think, sys_prompt, [{"role": "user", "content": f"NAYA TASK: {task}"}]
+            )
+        except BrainError:
+            return None
+        plan = _parse_step_array(raw)
+        if not plan:
+            return None
+
+        steps: list[dict] = []
+        typed: dict | None = None
+        for i, st in enumerate(plan[:12], 1):
+            tool_name = str(st.get("tool") or "")
+            args = st.get("args") or {}
+            if tool_name not in TOOLS:
+                continue
+            _set_progress(True, _TOOL_PROGRESS.get(tool_name, "Kaam kar raha hun…"), i)
+            result = await self._run_tool(tool_name, args)
+            steps.append({"step": i, "tool": tool_name, "args": args, "ok": bool(result.get("ok"))})
+            if tool_name in ("set_text", "type_in_window") and result.get("ok"):
+                txt, win = str(args.get("text") or ""), str(args.get("window_title") or "")
+                if txt and win:
+                    typed = {"window": win, "text": txt}
+            # An action step failing means the recipe didn't fit → relearn.
+            if not result.get("ok") and tool_name in (
+                "open_app", "click_element", "set_text", "type_in_window", "press_keys"
+            ):
+                log.info("replay_step_failed_fallback", intent=intent, tool=tool_name)
+                return None
+
+        # Verify the send actually landed before claiming success.
+        if typed:
+            present = await asyncio.to_thread(
+                _text_present_in_window, typed["window"], typed["text"]
+            )
+            if not present:
+                return None  # couldn't confirm via replay → let normal mode try
+            log.info("engine_replay_done", intent=intent, steps=len(steps))
+            return {
+                "ok": True,
+                "reply": f"⚡ {typed['text'][:50]} bhej diya (yaad tha, jaldi kiya).",
+                "steps": steps,
+                "replayed": True,
+            }
+        # No typing involved (e.g. open app) — trust completion if all ok.
+        log.info("engine_replay_done", intent=intent, steps=len(steps))
+        return {"ok": True, "reply": "⚡ Ho gaya (yaad tha, jaldi kiya).", "steps": steps, "replayed": True}
+
     async def run(
         self,
         task: str,
@@ -195,6 +272,21 @@ class UniversalEngine:
                 ),
                 "steps": [],
             }
+
+        # FAST PATH: if we've done this kind of task before, try replaying the
+        # saved recipe (1 planning call instead of ~6 think-act rounds).
+        intent = None
+        if not transcript:
+            from app.services.universal_engine.recipes import RecipeStore, intent_key
+            intent = intent_key(task)
+            if intent:
+                recipe = RecipeStore.get(intent)
+                if recipe:
+                    _set_progress(True, "Yaad kiya hua tareeqa chala raha hun…", 0)
+                    replayed = await self._try_replay(task, intent, recipe)
+                    if replayed is not None:
+                        return replayed
+                    log.info("replay_fell_back_to_normal", intent=intent)
 
         if transcript:
             # Resuming after a clarifying question — the user's reply is the answer.
@@ -258,6 +350,9 @@ class UniversalEngine:
                             "steps": steps,
                         }
                 log.info("engine_done", task=task[:80], steps=len(steps))
+                # LEARN: save the working step sequence as a recipe so next
+                # time this kind of task replays fast.
+                _maybe_save_recipe(intent, steps)
                 return {"ok": True, "reply": reply, "steps": steps}
 
             # Clarifying question — pause and hand control back to the user.
@@ -315,21 +410,7 @@ class UniversalEngine:
                         "steps": steps,
                     }
 
-            fn = TOOLS.get(tool_name)
-
-            if fn is None:
-                result = {
-                    "ok": False,
-                    "error": f"unknown tool: {tool_name}. Valid: {', '.join(TOOLS)}",
-                }
-            else:
-                call_args = _filter_args(fn, args)
-                try:
-                    result = await asyncio.to_thread(lambda: fn(**call_args))
-                except TypeError as e:
-                    result = {"ok": False, "error": f"galat args: {e}"}
-                except Exception as e:
-                    result = {"ok": False, "error": str(e)[:300]}
+            result = await self._run_tool(tool_name, args)
 
             # Track what got typed, so we can verify a "sent" claim later.
             if tool_name in ("set_text", "type_in_window") and result.get("ok"):
@@ -383,6 +464,46 @@ class UniversalEngine:
             ),
             "steps": steps,
         }
+
+
+def _parse_step_array(raw: str) -> list[dict] | None:
+    """Extract a JSON array of {tool,args} steps from the replay planner output."""
+    s = (raw or "").strip()
+    if s.startswith("```"):
+        s = s.strip("`")
+        if s.lower().startswith("json"):
+            s = s[4:]
+        s = s.strip()
+    start = s.find("[")
+    if start == -1:
+        return None
+    try:
+        arr = json.JSONDecoder().raw_decode(s[start:])[0]
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(arr, list):
+        return None
+    out = []
+    for item in arr:
+        if isinstance(item, dict) and (item.get("tool") or item.get("action")):
+            out.append({"tool": item.get("tool") or item.get("action"),
+                        "args": item.get("args") if isinstance(item.get("args"), dict) else {}})
+    return out or None
+
+
+def _maybe_save_recipe(intent, steps: list[dict]) -> None:
+    """Save the ok automation steps of a successful run as a reusable recipe."""
+    if not intent:
+        return
+    clean = [
+        {"tool": s["tool"], "args": s.get("args", {})}
+        for s in steps
+        if s.get("ok") and s.get("tool") in TOOLS
+        and s.get("tool") not in ("wait", "list_windows")
+    ]
+    if len(clean) >= 2:  # a real multi-step flow worth remembering
+        from app.services.universal_engine.recipes import RecipeStore
+        RecipeStore.save(intent, clean)
 
 
 _SUCCESS_WORDS = ("bhej diya", "bhej di", "send kar diya", "send kr diya", "ho gaya",

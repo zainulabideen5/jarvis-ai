@@ -54,6 +54,10 @@ async def lifespan(app: FastAPI):
     from app.services.contact_routing import ContactRouting
     await ContactRouting.ensure_table()
 
+    # Ensure engine recipe (skill memory) table
+    from app.services.universal_engine.recipes import RecipeStore
+    RecipeStore.ensure_table()
+
     # Start background processor
     processor = ChunkProcessor(config)
     processor_task = asyncio.create_task(processor.run())
