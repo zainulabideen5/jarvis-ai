@@ -387,15 +387,16 @@ class UniversalEngine:
             # for CLI) brain call — otherwise the previous step's line lingers.
             _set_progress(True, "Soch raha hun…", step_no)
             # The CLI's safety classifier is flaky on borderline automation
-            # transcripts — a straight retry usually passes. 3 attempts.
-            for attempt in range(3):
+            # transcripts — a straight retry usually passes. 2 attempts (each
+            # capped at THINK_TIMEOUT_SEC) so a hang doesn't freeze too long.
+            for attempt in range(2):
                 try:
                     raw = await asyncio.to_thread(brain.think, SYSTEM_PROMPT, transcript)
                     break
                 except BrainError as e:
                     last_err = e
                     log.warning("engine_brain_error", attempt=attempt + 1, error=str(e)[:200])
-                    await asyncio.sleep(1.5 * (attempt + 1))
+                    await asyncio.sleep(1.0)
             if raw is None:
                 return {"ok": False, "reply": f"Brain error: {last_err}", "steps": steps}
 

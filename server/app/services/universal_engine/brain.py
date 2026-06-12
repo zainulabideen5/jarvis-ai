@@ -16,7 +16,7 @@ from app.core.logging import get_logger
 log = get_logger(__name__)
 
 # Per-call timeout. Claude CLI cold-start + a long ui_tree can take a while.
-THINK_TIMEOUT_SEC = 60   # CLI cold-start ~8-15s; if it hangs, fail fast & retry
+THINK_TIMEOUT_SEC = 45   # CLI cold-start ~8-15s; if it hangs, fail fast & retry
 
 
 class BrainError(Exception):
