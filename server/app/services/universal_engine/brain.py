@@ -57,6 +57,19 @@ class ClaudeCLIBrain:
             )
 
         prompt = self._build_prompt(transcript)
+        # The system prompt (full playbook) is large — passing it on the command
+        # line hits Windows' "command line too long" limit. Write it to a temp
+        # file and use --system-prompt-file instead.
+        import os
+        import tempfile
+        sys_file = None
+        try:
+            fd, sys_file = tempfile.mkstemp(suffix=".txt", prefix="jarvis_sys_")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(system)
+        except Exception as e:
+            raise BrainError(f"system prompt temp file fail: {e}")
+
         try:
             proc = subprocess.run(
                 [
@@ -66,7 +79,7 @@ class ClaudeCLIBrain:
                     # 3 turns: if the model slips and calls a (denied) tool,
                     # the denial bounces it back to plain text within budget.
                     "--max-turns", "3",
-                    "--system-prompt", system,
+                    "--system-prompt-file", sys_file,
                     # The brain only thinks; our engine executes. Built-in
                     # tools off; account-level MCP connectors (Gmail etc.)
                     # can't be unloaded headlessly, so deny them wholesale.
@@ -86,6 +99,12 @@ class ClaudeCLIBrain:
             raise BrainError(f"Claude CLI timeout ({THINK_TIMEOUT_SEC}s)")
         except OSError as e:
             raise BrainError(f"Claude CLI launch fail: {e}")
+        finally:
+            if sys_file:
+                try:
+                    os.remove(sys_file)
+                except OSError:
+                    pass
 
         if proc.returncode != 0:
             err = (proc.stderr or proc.stdout or "").strip()[:400]
