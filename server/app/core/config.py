@@ -59,9 +59,10 @@ class ServerConfig(BaseSettings):
 
     # Cerebras (fallback #2 — super fast, 8000 msgs/day free)
     cerebras_api_key: str = ""
-    # Cerebras's stable always-available model — older naming convention
-    # ("llama3.1-8b" without dot in some docs) doesn't exist anymore.
-    cerebras_model: str = "llama-3.3-70b"
+    # Free-tier available model. The 70b ("llama-3.3-70b") 404s on free
+    # accounts ("does not exist or you do not have access"), so use 8b — it's
+    # the reliable fast fallback when Groq's daily quota is exhausted.
+    cerebras_model: str = "llama3.1-8b"
 
     # OpenRouter (fallback #3 — free models pool)
     openrouter_api_key: str = ""

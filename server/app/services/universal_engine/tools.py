@@ -197,16 +197,33 @@ def type_in_window(window_title: str, text: str, element_name: str = "", submit:
     return r
 
 
-def attach_file(window_title: str, element_name: str, file_path: str) -> dict:
-    """Chat box mein file/document attach karo (FAST) — file clipboard pe copy
-    karke message box mein paste hoti hai. element_name = message box ka naam
-    (jaise "Type a message"). Iske baad press_keys enter se bhej do.
-    Attach button/dialog ki zaroorat NAHI — yeh seedha tareeqa hai.
+def pick_file_in_dialog(file_path: str) -> dict:
+    """Windows "Open" file dialog mein file chuno — har app ka attach isi OS
+    dialog ko kholta hai (Teams/WhatsApp/Chrome sab same). Yeh dialog dhoondta
+    hai, "File name" box mein poora path daalta hai, aur "Open" dabata hai.
+    Attach button dabane ke BAAD yeh chalao.
     """
+    import os
     from app.services.laptop_control.laptop_native import LaptopNative
-    if SecurityBlocker.is_app_blocked(window_title):
-        return {"ok": False, "error": "blocked: sensitive app"}
-    return LaptopNative.get().attach_file(window_title, element_name, file_path)
+    p = os.path.abspath(os.path.expandvars(os.path.expanduser((file_path or "").strip().strip('"'))))
+    if not os.path.isfile(p):
+        return {"ok": False, "error": f"file nahi mili: {p}"}
+    nat = LaptopNative.get()
+    # The OS file dialog title is usually "Open" (sometimes localized).
+    for dlg in ("Open", "Choose File to Upload", "Select"):
+        win = nat._find_window(dlg)
+        if win is not None:
+            # Set the path into the "File name" edit (ValuePattern — native, safe)
+            r = nat.uia_type(dlg, "File name", p, control_type="Edit")
+            if not r.get("ok"):
+                # fallback: first Edit in the dialog
+                r = nat.uia_type(dlg, "", p, control_type="Edit")
+            # Click "Open"
+            nat.uia_invoke(dlg, "Open", "Button")
+            import time as _t
+            _t.sleep(0.6)
+            return {"ok": True, "picked": os.path.basename(p), "dialog": dlg}
+    return {"ok": False, "error": "file dialog (Open) nahi mila — pehle attach button dabao"}
 
 
 def press_keys(keys: list, window_title: str = "") -> dict:
@@ -342,7 +359,7 @@ TOOLS = {
     "click_element": click_element,
     "set_text": set_text,
     "type_in_window": type_in_window,
-    "attach_file": attach_file,
+    "pick_file_in_dialog": pick_file_in_dialog,
     "press_keys": press_keys,
     "open_app": open_app,
     "close_app": close_app,
@@ -360,7 +377,7 @@ TOOLS_DOC = """
 - click_element {"window_title": "...", "element_name": "...", "control_type": "Button|MenuItem|Hyperlink|TabItem|ListItem"} — element activate (SAFE: UIA invoke, mouse churaye bina)
 - set_text {"window_title": "...", "element_name": "...", "text": "...", "control_type": "Edit"} — field mein text daalo. YEH PREFERRED hai text ke liye — keyboard nahi chalata, user ki window mein leak nahi hota, antivirus flag nahi karta
 - type_in_window {"window_title": "...", "element_name": "Type a message", "text": "...", "submit": true} — chat box mein type karo. element_name DO (box ka naam) taake focus mile. submit:true DO to type ke baad Enter bhi dab jaata hai (message bhej deta hai) — chat ke liye yeh EK call kaafi hai, alag press_keys ki zaroorat nahi
-- attach_file {"window_title": "...", "element_name": "Type a message", "file_path": "..."} — chat box mein file/document attach karo (FAST: clipboard paste, koi dialog nahi). Iske baad press_keys enter se bhejo
+- pick_file_in_dialog {"file_path": "..."} — file attach karne ke liye: attach button dabane ke BAAD jo Windows "Open" dialog khulta hai, usme yeh file path daal kar Open dabata hai (har app pe same)
 - press_keys {"keys": ["ctrl","l"], "window_title": "..."} — hotkey/key (enter, tab, esc, f5). App-level keys ke liye window_title do taake sahi window mein jayein
 - open_app {"name": "chrome|teams|notepad|excel|..."} — app launch
 - close_app {"name": "..."} — app band

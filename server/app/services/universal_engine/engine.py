@@ -90,17 +90,16 @@ PLAYBOOK — chat app mein FILE / DOCUMENT / PDF / image bhejna:
 2. Contact ka chat kholo (ui_tree → contact click_element).
 3. ui_tree (Button filter) → attach button dhoondo. Teams mein woh
    "Attach files" hota hai (image ke liye "Attach media"). click_element us par.
-4. ui_tree → agar koi menu/dialog khula:
-   - "Upload from this device" / "This device" jaisa option ho to click_element.
-   - Phir Windows file dialog khulta hai (window title aksar "Open").
-5. ui_tree {{"window_title":"Open"}} → "File name" Edit mein set_text se poora
-   path daalo → click_element "Open" button (ya press_keys enter window "Open").
+4. ui_tree → agar menu khula aur usme "Upload from this device" / "This device"
+   ho to click_element. (Kuch apps seedha file dialog khol dete hain — tab yeh
+   skip karo.)
+5. pick_file_in_dialog {{"file_path":"<poora path>"}} — yeh khud "Open" dialog
+   mein path daal kar Open dabata hai. (set_text/ui_tree khud mat karo dialog pe.)
 6. wait {{"seconds":2}} (file upload hone do).
-7. Send: click_element "Send" button (Teams mein "Send"), ya press_keys
+7. Send: click_element "Send" button, ya press_keys
    {{"keys":["ctrl","enter"], "window_title":"<chat window>"}}.
 8. VERIFY: ui_tree {{"window_title":"<chat>", "name_contains":"<file ka naam>"}} —
-   file/attachment chat mein nazar aaye TABHI done "bhej diya". Na dikhe to
-   honestly batao — jhoot mat bolo.
+   file chat mein nazar aaye TABHI done "bhej diya". Na dikhe to honestly batao.
 
 EXECUTION GUIDELINES:
 1. ui_tree before interacting inside a window — read real element names, don't guess.
@@ -250,7 +249,7 @@ class UniversalEngine:
             # An action step failing means the recipe didn't fit → relearn.
             if not result.get("ok") and tool_name in (
                 "open_app", "click_element", "set_text", "type_in_window",
-                "attach_file", "press_keys"
+                "pick_file_in_dialog", "press_keys"
             ):
                 log.info("replay_step_failed_fallback", intent=intent, tool=tool_name)
                 return None
@@ -475,10 +474,11 @@ class UniversalEngine:
                             typed = {"window": "", "text": art}   # scan chat windows
                         else:
                             typed = {"window": win, "text": txt}
-                elif tool_name == "attach_file":
+                elif tool_name == "pick_file_in_dialog":
                     art = _basename_if_path(str(args.get("file_path") or ""))
                     if art:
-                        typed = {"window": win, "text": art}
+                        # verify against chat-app windows (dialog is gone by then)
+                        typed = {"window": "", "text": art}
 
             log.info(
                 "engine_step",
@@ -595,7 +595,7 @@ def _scrub_recipe_step(tool: str, args: dict) -> dict:
         out["text"] = "<MESSAGE>"
     if tool == "click_element" and str(out.get("control_type", "")) in ("TreeItem", "ListItem"):
         out["element_name"] = "<CONTACT>"     # the person clicked in a list
-    if tool == "attach_file" and "file_path" in out:
+    if tool == "pick_file_in_dialog" and "file_path" in out:
         out["file_path"] = "<FILE>"
     if tool == "send_email":
         for k in ("to", "recipient"):
