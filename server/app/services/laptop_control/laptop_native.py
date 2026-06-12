@@ -176,16 +176,19 @@ class LaptopNative:
         except Exception as e:
             return {"ok": False, "error": f"clipboard set fail: {str(e)[:150]}"}
 
-        # Focus the compose box, then paste the file into it.
-        fe = self.focus_element(window_title, element_name)
-        if not fe.get("ok"):
-            fg = self.focus_and_verify(window_title)
-            if not fg.get("ok"):
-                return {"ok": False, "error": f"focus fail: {fe.get('error')}"}
+        # Focus the compose box with a REAL CLICK (WebView needs real input
+        # focus — set_focus alone doesn't make Ctrl+V land), then paste.
+        clicked = self.uia_invoke(window_title, element_name, "Edit")
+        if not clicked.get("ok"):
+            clicked = self.uia_invoke(window_title, element_name, "Document")
+        if not clicked.get("ok"):
+            # last resort: focus the window + UIA set_focus on the box
+            self.focus_and_verify(window_title)
+            self.focus_element(window_title, element_name)
         pag = _get_pyautogui()
-        time.sleep(0.2)
+        time.sleep(0.4)
         pag.hotkey("ctrl", "v")
-        time.sleep(1.0)  # let the app upload/render the attachment chip
+        time.sleep(1.5)  # let the app upload/render the attachment chip
         return {"ok": True, "attached": os.path.basename(p)}
 
     def press_key(self, key: str) -> dict:
@@ -440,12 +443,13 @@ class LaptopNative:
             return {"ok": False, "error": str(e)[:200]}
 
     def uia_invoke(self, window_title: str, element_name: str, control_type: str = "Button") -> dict:
-        """Activate an element via UIA Invoke/Toggle/Select pattern — SAFE.
+        """Activate an element BY NAME.
 
-        Triggers the control through the accessibility API instead of moving
-        the real mouse and clicking. Works without stealing foreground and is
-        not flagged by antivirus. Falls back to a real click only if the
-        element exposes no invokable pattern.
+        WebView apps (Teams/WhatsApp/Slack) ignore the UIA Invoke pattern —
+        it returns "ok" but nothing happens (contacts don't switch, menu items
+        don't fire). So we do a REAL mouse click (click_input) FIRST, which
+        actually triggers WebView controls; UIA invoke is only the fallback for
+        native controls where a real click might miss.
         """
         try:
             window = self._find_window(window_title)
@@ -454,9 +458,9 @@ class LaptopNative:
 
             target = None
             try:
-                target = window.child_window(title=element_name, control_type=control_type)
-                if not target.exists():
-                    target = None
+                cand = window.child_window(title=element_name, control_type=control_type)
+                if cand.exists():
+                    target = cand
             except Exception:
                 target = None
             if target is None:
@@ -470,18 +474,23 @@ class LaptopNative:
             if target is None:
                 return {"ok": False, "error": f"'{element_name}' element nahi mila"}
 
-            # Prefer pattern-based activation (no mouse, no foreground steal)
+            label = target.window_text() or element_name
+            # REAL click first — reliably triggers WebView controls.
+            try:
+                target.click_input()
+                return {"ok": True, "invoked": label, "via": "click"}
+            except Exception:
+                pass
+            # Fallback: UIA pattern (native controls / when click can't reach)
             for method in ("invoke", "toggle", "select"):
                 fn = getattr(target, method, None)
                 if callable(fn):
                     try:
                         fn()
-                        return {"ok": True, "invoked": target.window_text() or element_name, "via": method}
+                        return {"ok": True, "invoked": label, "via": method}
                     except Exception:
                         continue
-            # Last resort: real click
-            target.click_input()
-            return {"ok": True, "invoked": target.window_text() or element_name, "via": "click"}
+            return {"ok": False, "error": f"'{element_name}' click/invoke fail"}
         except Exception as e:
             return {"ok": False, "error": str(e)[:200]}
 

@@ -98,19 +98,22 @@ After a user answer, continue from where you left off.
 PLAYBOOK — chat app mein FILE / DOCUMENT / PDF / image bhejna:
 1. File ka FULL path nikalo: agar sirf naam diya to find_files se poora path lo.
    (Task mein full path diya ho to wahi use karo.)
-2. Contact ka chat kholo (ui_tree → contact click_element).
-3. ui_tree (Button filter) → attach button dhoondo. Teams mein woh
-   "Attach files" hota hai (image ke liye "Attach media"). click_element us par.
-4. ui_tree → agar menu khula aur usme "Upload from this device" / "This device"
-   ho to click_element. (Kuch apps seedha file dialog khol dete hain — tab yeh
-   skip karo.)
-5. pick_file_in_dialog {{"file_path":"<poora path>"}} — yeh khud "Open" dialog
-   mein path daal kar Open dabata hai. (set_text/ui_tree khud mat karo dialog pe.)
-6. wait {{"seconds":2}} (file upload hone do).
-7. Send: click_element "Send" button, ya press_keys
-   {{"keys":["ctrl","enter"], "window_title":"<chat window>"}}.
-8. VERIFY: ui_tree {{"window_title":"<chat>", "name_contains":"<file ka naam>"}} —
-   file chat mein nazar aaye TABHI done "bhej diya". Na dikhe to honestly batao.
+2. Contact kholo (Search box → naam → Enter → header confirm, message playbook
+   ki tarah).
+3. PASTE tareeqa PEHLE (sabse seedha, har app pe same):
+   attach_file {{"window_title":"<app>", "element_name":"Type a message",
+                 "file_path":"<poora path>"}}
+   — yeh file clipboard se compose box mein paste kar deta hai (real click + Ctrl+V).
+4. wait {{"seconds":2}} (upload hone do).
+5. ui_tree {{"window_title":"<app>", "name_contains":"<file ka naam>"}} se dekho
+   ke file compose/preview mein nazar aa rahi hai.
+   - Agar nazar AAYE → press_keys {{"keys":["enter"], "window_title":"<app>"}} se bhejo.
+   - Agar NA aaye (paste na chala) → FALLBACK: attach button (jaise Teams "Attach
+     files") click_element → menu mein "Upload from this device" click_element →
+     pick_file_in_dialog {{"file_path":"<path>"}} → wait → Send.
+6. VERIFY: ui_tree {{"window_title":"<app>", "name_contains":"<file ka naam>"}} —
+   file CHAT (message list) mein nazar aaye TABHI done "bhej diya". Na dikhe to
+   honestly batao "confirm nahi kar saka".
 
 EXECUTION GUIDELINES:
 1. ui_tree before interacting inside a window — read real element names, don't guess.

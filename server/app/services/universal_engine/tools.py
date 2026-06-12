@@ -197,11 +197,21 @@ def type_in_window(window_title: str, text: str, element_name: str = "", submit:
     return r
 
 
+def attach_file(window_title: str, element_name: str, file_path: str) -> dict:
+    """File ko chat compose box mein PASTE karo (jaise insaan Ctrl+V karta hai).
+    File clipboard pe aati hai, message box pe real click se focus, phir Ctrl+V.
+    Har chat app pe same (Teams/WhatsApp/Slack). element_name = message box ka
+    naam (jaise "Type a message"). Iske baad press_keys enter se bhejo.
+    """
+    from app.services.laptop_control.laptop_native import LaptopNative
+    if SecurityBlocker.is_app_blocked(window_title):
+        return {"ok": False, "error": "blocked: sensitive app"}
+    return LaptopNative.get().attach_file(window_title, element_name, file_path)
+
+
 def pick_file_in_dialog(file_path: str) -> dict:
-    """Windows "Open" file dialog mein file chuno — har app ka attach isi OS
-    dialog ko kholta hai (Teams/WhatsApp/Chrome sab same). Yeh dialog dhoondta
-    hai, "File name" box mein poora path daalta hai, aur "Open" dabata hai.
-    Attach button dabane ke BAAD yeh chalao.
+    """Windows "Open" file dialog mein file chuno — agar paste na chale to:
+    attach button dabane ke BAAD jo OS dialog khulta hai usme path daal kar Open.
     """
     import os
     from app.services.laptop_control.laptop_native import LaptopNative
@@ -374,6 +384,7 @@ TOOLS = {
     "click_element": click_element,
     "set_text": set_text,
     "type_in_window": type_in_window,
+    "attach_file": attach_file,
     "pick_file_in_dialog": pick_file_in_dialog,
     "press_keys": press_keys,
     "open_app": open_app,
@@ -393,7 +404,8 @@ TOOLS_DOC = """
 - click_element {"window_title": "...", "element_name": "...", "control_type": "Button|MenuItem|Hyperlink|TabItem|ListItem"} — element activate (SAFE: UIA invoke, mouse churaye bina)
 - set_text {"window_title": "...", "element_name": "...", "text": "...", "control_type": "Edit"} — field mein text daalo. YEH PREFERRED hai text ke liye — keyboard nahi chalata, user ki window mein leak nahi hota, antivirus flag nahi karta
 - type_in_window {"window_title": "...", "element_name": "Type a message", "text": "...", "submit": true} — chat box mein type karo. element_name DO (box ka naam) taake focus mile. submit:true DO to type ke baad Enter bhi dab jaata hai (message bhej deta hai) — chat ke liye yeh EK call kaafi hai, alag press_keys ki zaroorat nahi
-- pick_file_in_dialog {"file_path": "..."} — file attach karne ke liye: attach button dabane ke BAAD jo Windows "Open" dialog khulta hai, usme yeh file path daal kar Open dabata hai (har app pe same)
+- attach_file {"window_title": "...", "element_name": "Type a message", "file_path": "..."} — file ko compose box mein PASTE karo (clipboard + real-click focus + Ctrl+V). File bhejne ka SABSE SEEDHA tareeqa. Iske baad press_keys enter se bhejo
+- pick_file_in_dialog {"file_path": "..."} — AGAR paste na chale: attach button dabane ke baad jo "Open" dialog khulta hai usme path daal kar Open
 - press_keys {"keys": ["ctrl","l"], "window_title": "..."} — hotkey/key (enter, tab, esc, f5). App-level keys ke liye window_title do taake sahi window mein jayein
 - open_app {"name": "chrome|teams|whatsapp|notepad|..."} — app launch (khulne ke baad window chhoti ho jaati hai, full-screen nahi)
 - resize_window {"title": "...", "width": 1000, "height": 720} — window ko chhota karo agar full-screen ho
