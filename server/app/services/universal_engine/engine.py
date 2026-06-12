@@ -217,6 +217,19 @@ class UniversalEngine:
         except Exception as e:
             return {"ok": False, "error": str(e)[:300]}
 
+    @staticmethod
+    async def _bounded(fn, *args, timeout: float = 15, default=None):
+        """Run a sync helper in a thread with a hard timeout — pre-count and
+        verify scans were hanging unbounded on huge WebView trees, freezing
+        the task at 'Type kar raha hun…' forever."""
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(fn, *args), timeout=timeout)
+        except asyncio.TimeoutError:
+            log.warning("bounded_helper_timeout", fn=getattr(fn, "__name__", "?"))
+            return default
+        except Exception:
+            return default
+
     async def _try_replay(self, task: str, intent: str, recipe: list[dict]) -> dict | None:
         """FAST PATH: adapt a saved recipe to this task in ONE planning call,
         then run the steps without per-step thinking. Returns a result dict on
@@ -271,8 +284,9 @@ class UniversalEngine:
             if tool_name in ("set_text", "type_in_window", "attach_file", "pick_file_in_dialog"):
                 _vtxt = _basename_if_path(str(args.get("file_path") or args.get("text") or ""))
                 if _vtxt:
-                    pre_count = await asyncio.to_thread(
-                        _count_text_in_window, str(args.get("window_title") or ""), _vtxt)
+                    pre_count = await self._bounded(
+                        _count_text_in_window, str(args.get("window_title") or ""), _vtxt,
+                        timeout=15, default=None)
             result = await self._run_tool(tool_name, args)
             steps.append({"step": i, "tool": tool_name, "args": args, "ok": bool(result.get("ok"))})
             if result.get("ok") and tool_name in ("set_text", "type_in_window", "attach_file", "pick_file_in_dialog"):
@@ -291,9 +305,9 @@ class UniversalEngine:
 
         # Verify the send actually landed before claiming success.
         if typed:
-            present = await asyncio.to_thread(
-                _verify_present, typed["window"], typed["text"], typed.get("before")
-            )
+            present = await self._bounded(
+                _verify_present, typed["window"], typed["text"], typed.get("before"),
+                timeout=20, default=False)
             if not present:
                 return None  # couldn't confirm via replay → let normal mode try
             log.info("engine_replay_done", intent=intent, steps=len(steps))
@@ -344,8 +358,9 @@ class UniversalEngine:
             if tool_name in ("set_text", "type_in_window", "attach_file", "pick_file_in_dialog"):
                 _vtxt = _basename_if_path(str(args.get("file_path") or args.get("text") or ""))
                 if _vtxt:
-                    pre_count = await asyncio.to_thread(
-                        _count_text_in_window, str(args.get("window_title") or ""), _vtxt)
+                    pre_count = await self._bounded(
+                        _count_text_in_window, str(args.get("window_title") or ""), _vtxt,
+                        timeout=15, default=None)
             result = await self._run_tool(tool_name, args)
             steps.append({"step": i, "tool": tool_name, "args": args, "ok": bool(result.get("ok"))})
             if not result.get("ok"):
@@ -359,9 +374,9 @@ class UniversalEngine:
                     typed = {"window": str(args.get("window_title") or ""), "text": art, "before": pre_count}
 
         if typed:
-            present = await asyncio.to_thread(
-                _verify_present, typed["window"], typed["text"], typed.get("before")
-            )
+            present = await self._bounded(
+                _verify_present, typed["window"], typed["text"], typed.get("before"),
+                timeout=20, default=False)
             if not present:
                 return None  # not confirmed — let the interactive loop retry properly
             _maybe_save_recipe(intent, steps)
@@ -495,9 +510,9 @@ class UniversalEngine:
                 # report success. Catches the "bhej diya" lie when typing
                 # silently failed (e.g. focus didn't land on a WebView box).
                 if typed and _claims_success(reply):
-                    present = await asyncio.to_thread(
-                        _verify_present, typed["window"], typed["text"], typed.get("before")
-                    )
+                    present = await self._bounded(
+                        _verify_present, typed["window"], typed["text"], typed.get("before"),
+                        timeout=20, default=False)
                     if not present:
                         log.warning("engine_unverified_send", window=typed["window"])
                         return {
@@ -579,7 +594,7 @@ class UniversalEngine:
                 _vtxt = _basename_if_path(str(args.get("file_path") or args.get("text") or ""))
                 _vwin = str(args.get("window_title") or "")
                 if _vtxt:
-                    pre_count = await asyncio.to_thread(_count_text_in_window, _vwin, _vtxt)
+                    pre_count = await self._bounded(_count_text_in_window, _vwin, _vtxt, timeout=15, default=None)
 
             result = await self._run_tool(tool_name, args)
 
@@ -628,9 +643,9 @@ class UniversalEngine:
         # Ran out of steps. But if we typed a message and it's actually present
         # in the window, the send DID succeed — don't report a false failure.
         if typed:
-            present = await asyncio.to_thread(
-                _verify_present, typed["window"], typed["text"], typed.get("before")
-            )
+            present = await self._bounded(
+                _verify_present, typed["window"], typed["text"], typed.get("before"),
+                timeout=20, default=False)
             if present:
                 return {
                     "ok": True,
