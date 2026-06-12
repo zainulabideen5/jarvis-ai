@@ -16,7 +16,7 @@ from app.core.logging import get_logger
 log = get_logger(__name__)
 
 # Per-call timeout. Claude CLI cold-start + a long ui_tree can take a while.
-THINK_TIMEOUT_SEC = 180
+THINK_TIMEOUT_SEC = 60   # CLI cold-start ~8-15s; if it hangs, fail fast & retry
 
 
 class BrainError(Exception):
@@ -174,7 +174,7 @@ class LLMBrain:
 #   "cli"  → Claude CLI (Opus 4.8): smartest, but ~10-15s/step cold start
 #   "groq" → fast Groq/Cerebras stack (~1s/step), slightly less smart
 #   "api"  → (future) Anthropic API: fast + smart, needs paid key
-BRAIN_CHOICE = "groq"
+BRAIN_CHOICE = "cli"
 
 _brain = None
 
