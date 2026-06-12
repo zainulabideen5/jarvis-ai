@@ -203,7 +203,8 @@ class UniversalEngine:
             "Tum ek desktop-automation planner ho. Neeche ek SAVED RECIPE hai "
             "(steps jo pichli dafa is tarah ke kaam mein chale). Usme PLACEHOLDERS "
             "hain: <CONTACT> = jis shaks ko bhejna, <MESSAGE> = message text, "
-            "<EMAIL> = email address. NAYE TASK ke hisaab se in placeholders ko "
+            "<EMAIL> = email address, <FILE> = file ka poora path. NAYE TASK ke "
+            "hisaab se in placeholders ko "
             "ASAL value se replace karke poora step-plan EK JSON ARRAY mein do — "
             "baqi structure aur UI labels (jaise 'Type a message') waise hi rakho. "
             "<CONTACT> ke liye sirf naam likho (system khud match kar lega). "
@@ -224,7 +225,7 @@ class UniversalEngine:
         # Safety: if the planner left any placeholder unfilled, don't run it
         # (would send literal "<MESSAGE>") — fall back to normal mode.
         if any(ph in json.dumps(plan, ensure_ascii=False)
-               for ph in ("<CONTACT>", "<MESSAGE>", "<EMAIL>")):
+               for ph in ("<CONTACT>", "<MESSAGE>", "<EMAIL>", "<FILE>")):
             log.info("replay_placeholder_unfilled_fallback", intent=intent)
             return None
 
@@ -244,7 +245,8 @@ class UniversalEngine:
                     typed = {"window": win, "text": txt}
             # An action step failing means the recipe didn't fit → relearn.
             if not result.get("ok") and tool_name in (
-                "open_app", "click_element", "set_text", "type_in_window", "press_keys"
+                "open_app", "click_element", "set_text", "type_in_window",
+                "attach_file", "press_keys"
             ):
                 log.info("replay_step_failed_fallback", intent=intent, tool=tool_name)
                 return None
@@ -580,6 +582,8 @@ def _scrub_recipe_step(tool: str, args: dict) -> dict:
         out["text"] = "<MESSAGE>"
     if tool == "click_element" and str(out.get("control_type", "")) in ("TreeItem", "ListItem"):
         out["element_name"] = "<CONTACT>"     # the person clicked in a list
+    if tool == "attach_file" and "file_path" in out:
+        out["file_path"] = "<FILE>"
     if tool == "send_email":
         for k in ("to", "recipient"):
             if k in out:

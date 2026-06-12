@@ -107,6 +107,27 @@ def intent_from_steps(steps: list[dict]) -> str | None:
     return f"{'send' if typed else 'open'}:{app}"
 
 
+# Built-in recipes for common apps — make the FIRST run fast (these are the
+# validated Teams flows). Placeholders get filled at replay time. open_app is
+# safe even if the app is already open (it just focuses).
+_DEFAULT_RECIPES = {
+    "send:teams": [
+        {"tool": "open_app", "args": {"name": "teams"}},
+        {"tool": "wait", "args": {"seconds": 2}},
+        {"tool": "click_element", "args": {"window_title": "Teams", "element_name": "<CONTACT>", "control_type": "TreeItem"}},
+        {"tool": "type_in_window", "args": {"window_title": "Teams", "element_name": "Type a message", "text": "<MESSAGE>", "submit": True}},
+    ],
+    "sendfile:teams": [
+        {"tool": "open_app", "args": {"name": "teams"}},
+        {"tool": "wait", "args": {"seconds": 2}},
+        {"tool": "click_element", "args": {"window_title": "Teams", "element_name": "<CONTACT>", "control_type": "TreeItem"}},
+        {"tool": "attach_file", "args": {"window_title": "Teams", "element_name": "Type a message", "file_path": "<FILE>"}},
+        {"tool": "wait", "args": {"seconds": 2}},
+        {"tool": "press_keys", "args": {"keys": ["enter"], "window_title": "Teams"}},
+    ],
+}
+
+
 class RecipeStore:
     """Learned step sequences, one per intent key."""
 
@@ -123,6 +144,28 @@ class RecipeStore:
                 )
             """)
             conn.commit()
+        RecipeStore._seed_defaults()
+
+    @staticmethod
+    def _seed_defaults() -> None:
+        """Ship built-in recipes for common apps so even the FIRST send is fast
+        (no per-machine learning needed). Only inserted if missing — never
+        overwrites a recipe the user's own runs have refined."""
+        for key, steps in _DEFAULT_RECIPES.items():
+            try:
+                with sqlite3.connect(str(_db_path())) as conn:
+                    exists = conn.execute(
+                        "SELECT 1 FROM engine_recipes WHERE intent_key = ?", (key,)
+                    ).fetchone()
+                    if not exists:
+                        conn.execute(
+                            "INSERT INTO engine_recipes (intent_key, steps_json, use_count) "
+                            "VALUES (?, ?, 0)",
+                            (key, json.dumps(steps, ensure_ascii=False)),
+                        )
+                        conn.commit()
+            except Exception as e:
+                log.debug("seed_recipe_failed", intent=key, error=str(e))
 
     @staticmethod
     def get(key: str) -> list[dict] | None:
