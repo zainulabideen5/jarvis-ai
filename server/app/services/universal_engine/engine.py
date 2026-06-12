@@ -204,6 +204,11 @@ class UniversalEngine:
         """FAST PATH: adapt a saved recipe to this task in ONE planning call,
         then run the steps without per-step thinking. Returns a result dict on
         success, or None to signal 'fall back to normal step-by-step'."""
+        # Safety: never replay an unsafe recipe (a send without a contact-click
+        # would dump the message into whatever chat is open → wrong person).
+        if not _is_sane_send_recipe(recipe):
+            log.info("replay_skipped_unsafe_recipe", intent=intent)
+            return None
         brain = get_brain()
         sys_prompt = (
             "Tum ek desktop-automation planner ho. Neeche ek SAVED RECIPE hai "
@@ -612,16 +617,47 @@ def _scrub_recipe_step(tool: str, args: dict) -> dict:
     return out
 
 
+def _is_sane_send_recipe(clean: list[dict]) -> bool:
+    """A messaging recipe is only safe if it SELECTS a recipient before typing.
+    Without a click_element (contact pick) before the first type/send, replay
+    would dump the message into whatever chat is open → wrong person. Generic
+    check — no app/name specifics."""
+    send_tools = ("type_in_window", "set_text", "pick_file_in_dialog")
+    first_send = next((i for i, s in enumerate(clean) if s["tool"] in send_tools), None)
+    if first_send is None:
+        return True  # not a send recipe (e.g. open app) — fine
+    # must click something (the contact) before the first send
+    return any(s["tool"] == "click_element" for s in clean[:first_send])
+
+
+def _dedupe_consecutive_sends(clean: list[dict]) -> list[dict]:
+    """Drop a repeated identical send right after itself (messy runs sometimes
+    type the same message twice)."""
+    out: list[dict] = []
+    for s in clean:
+        if (out and s["tool"] in ("type_in_window", "set_text")
+                and out[-1].get("tool") == s["tool"]
+                and out[-1].get("args") == s.get("args")):
+            continue
+        out.append(s)
+    return out
+
+
 def _maybe_save_recipe(intent, steps: list[dict]) -> None:
     """Save the ok automation steps of a successful run as a reusable recipe.
-    Values are scrubbed to placeholders — no real names/emails/messages stored."""
+    Values are scrubbed to placeholders — no real names/emails/messages stored.
+    Only saved if the sequence is SANE (selects a recipient before sending)."""
     clean = [
         {"tool": s["tool"], "args": _scrub_recipe_step(s["tool"], s.get("args", {}))}
         for s in steps
         if s.get("ok") and s.get("tool") in TOOLS
-        and s.get("tool") not in ("wait", "list_windows")
+        and s.get("tool") not in ("wait", "list_windows", "ui_tree")
     ]
+    clean = _dedupe_consecutive_sends(clean)
     if len(clean) < 2:  # not a real multi-step flow
+        return
+    if not _is_sane_send_recipe(clean):
+        log.info("recipe_rejected_unsafe", reason="no contact-click before send")
         return
     from app.services.universal_engine.recipes import RecipeStore, intent_from_steps
     # Prefer the task-derived intent; if the task text was too typo'd to parse,
