@@ -259,14 +259,37 @@ class UniversalEngine:
         max_steps: int = MAX_STEPS,
         transcript: list[dict] | None = None,
     ) -> dict:
-        """Run a task (or resume one) until done or a clarifying question.
+        """Run a task, then tidy up: minimize whatever app it used and return
+        the user to where they were (e.g. the dashboard). Wrapper around the
+        actual loop so cleanup runs no matter which path returns."""
+        # Remember where the user was BEFORE we start grabbing windows.
+        origin = None
+        if not transcript:
+            try:
+                origin = await asyncio.to_thread(
+                    LaptopNative_active_title
+                )
+            except Exception:
+                origin = None
 
-        transcript: pass a prior session's transcript to RESUME after the user
-            answered an `ask`. In that case `task` is the user's answer.
+        result = await self._run_impl(task, max_steps, transcript)
 
-        Returns {ok, reply, steps} on completion, OR
-        {ok: False, needs_input: True, question, transcript} when it asks.
-        """
+        # Auto-minimize the apps we touched + refocus the origin — UNLESS we're
+        # pausing to ask the user something (then keep things as-is).
+        if not result.get("needs_input"):
+            try:
+                await asyncio.to_thread(_post_task_cleanup, result.get("steps", []), origin)
+            except Exception as e:
+                log.debug("post_task_cleanup_failed", error=str(e))
+        return result
+
+    async def _run_impl(
+        self,
+        task: str,
+        max_steps: int = MAX_STEPS,
+        transcript: list[dict] | None = None,
+    ) -> dict:
+        """The actual think→act→observe loop (and recipe replay)."""
         task = (task or "").strip()
         if not task:
             return {"ok": False, "reply": "Task khali hai", "steps": []}
@@ -473,6 +496,39 @@ class UniversalEngine:
             ),
             "steps": steps,
         }
+
+
+def LaptopNative_active_title() -> str:
+    from app.services.laptop_control.laptop_native import LaptopNative
+    return LaptopNative.get().active_window_title()
+
+
+def _post_task_cleanup(steps: list[dict], origin: str | None) -> None:
+    """After a task: minimize the app windows the engine used, then bring the
+    user back to where they were (e.g. the JARVIS dashboard). Generic — works
+    for any app, not just Teams."""
+    from app.services.laptop_control.laptop_native import LaptopNative
+    nat = LaptopNative.get()
+    origin_low = (origin or "").lower().strip()
+    wins: list[str] = []
+    for s in steps:
+        w = (s.get("args") or {}).get("window_title")
+        if w and w.lower() not in [x.lower() for x in wins]:
+            wins.append(w)
+    for w in wins:
+        # don't minimize the user's own origin window (e.g. the dashboard)
+        if origin_low and (w.lower() in origin_low or origin_low in w.lower()):
+            continue
+        try:
+            nat.minimize_window(w)
+        except Exception:
+            pass
+    # Return focus to where the user was
+    if origin_low:
+        try:
+            nat.focus_window(origin)
+        except Exception:
+            pass
 
 
 def _parse_step_array(raw: str) -> list[dict] | None:

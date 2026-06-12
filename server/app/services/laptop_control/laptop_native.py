@@ -267,6 +267,15 @@ class LaptopNative:
         except Exception as e:
             return {"ok": False, "error": str(e)[:200]}
 
+    def active_window_title(self) -> str:
+        """Title of the currently-foreground window (jahan user abhi hai)."""
+        try:
+            import pygetwindow as gw
+            a = gw.getActiveWindow()
+            return (getattr(a, "title", "") or "")
+        except Exception:
+            return ""
+
     def minimize_window(self, title_substring: str) -> dict:
         try:
             import pygetwindow as gw
