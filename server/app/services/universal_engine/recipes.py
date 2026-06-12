@@ -25,12 +25,16 @@ _APPS = (
     "outlook", "excel", "word", "powerpoint", "notepad", "chrome", "edge",
     "explorer", "spotify", "vscode", "calculator",
 )
-# Action verbs (Roman Urdu + English) → grouped to a canonical action.
+# Action verbs (Roman Urdu + English, with common typo/spelling variants) →
+# grouped to a canonical action. Users type casual Roman Urdu ("bhaj", "bhj"),
+# so keep this generous.
 _ACTIONS = {
-    "send": ("message", "msg", "bhej", "bhejo", "send", "likho", "likh", "text"),
-    "open": ("kholo", "khol", "open", "launch", "chalao", "chala"),
-    "create": ("banao", "bana", "create", "naya", "new"),
-    "search": ("dhoondo", "search", "find", "dhundo"),
+    "send": ("message", "msg", "send", "text",
+             "bhej", "bhejo", "bhej", "bhaj", "bej", "bhj", "bhejna", "bhejdo",
+             "bhejde", "bhejdena", "likho", "likh", "likhdo", "bhajo", "bhaaj"),
+    "open": ("kholo", "khol", "open", "launch", "chalao", "chala", "kholdo"),
+    "create": ("banao", "bana", "create", "naya", "new", "banado"),
+    "search": ("dhoondo", "search", "find", "dhundo", "dhund"),
 }
 
 
@@ -58,6 +62,31 @@ def intent_key(task: str) -> str | None:
     if not action:
         return None
     return f"{action}:{app}"
+
+
+def intent_from_steps(steps: list[dict]) -> str | None:
+    """Robust fallback: derive intent from what actually happened, so a
+    typo-ridden task ('bhaj') still gets remembered. Looks at the app in the
+    window titles + whether a type/send vs open happened."""
+    app = None
+    typed = False
+    for s in steps:
+        args = s.get("args", {}) or {}
+        win = str(args.get("window_title") or "").lower()
+        for a in _APPS:
+            if a in win:
+                app = a.replace(" ", "")
+                break
+        if s.get("tool") in ("type_in_window", "set_text"):
+            typed = True
+        if s.get("tool") == "open_app":
+            name = str(args.get("name") or "").lower()
+            for a in _APPS:
+                if a in name:
+                    app = app or a.replace(" ", "")
+    if not app:
+        return None
+    return f"{'send' if typed else 'open'}:{app}"
 
 
 class RecipeStore:

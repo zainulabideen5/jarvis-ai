@@ -493,17 +493,20 @@ def _parse_step_array(raw: str) -> list[dict] | None:
 
 def _maybe_save_recipe(intent, steps: list[dict]) -> None:
     """Save the ok automation steps of a successful run as a reusable recipe."""
-    if not intent:
-        return
     clean = [
         {"tool": s["tool"], "args": s.get("args", {})}
         for s in steps
         if s.get("ok") and s.get("tool") in TOOLS
         and s.get("tool") not in ("wait", "list_windows")
     ]
-    if len(clean) >= 2:  # a real multi-step flow worth remembering
-        from app.services.universal_engine.recipes import RecipeStore
-        RecipeStore.save(intent, clean)
+    if len(clean) < 2:  # not a real multi-step flow
+        return
+    from app.services.universal_engine.recipes import RecipeStore, intent_from_steps
+    # Prefer the task-derived intent; if the task text was too typo'd to parse,
+    # fall back to deriving intent from what actually happened.
+    key = intent or intent_from_steps(steps)
+    if key:
+        RecipeStore.save(key, clean)
 
 
 _SUCCESS_WORDS = ("bhej diya", "bhej di", "send kar diya", "send kr diya", "ho gaya",
