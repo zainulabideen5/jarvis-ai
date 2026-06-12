@@ -174,7 +174,7 @@ class LLMBrain:
 #   "cli"  → Claude CLI (Opus 4.8): smartest, but ~10-15s/step cold start
 #   "groq" → fast Groq/Cerebras stack (~1s/step), slightly less smart
 #   "api"  → (future) Anthropic API: fast + smart, needs paid key
-BRAIN_CHOICE = "groq"
+BRAIN_CHOICE = "cli"
 
 _brain = None
 

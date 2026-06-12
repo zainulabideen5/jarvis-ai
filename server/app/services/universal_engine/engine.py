@@ -307,6 +307,68 @@ class UniversalEngine:
         log.info("engine_replay_done", intent=intent, steps=len(steps))
         return {"ok": True, "reply": "⚡ Ho gaya (yaad tha, jaldi kiya).", "steps": steps, "replayed": True}
 
+    async def _try_direct_plan(self, task: str, intent: str | None) -> dict | None:
+        """FAST PATH for NEW tasks (no recipe yet): ask the brain ONCE for the
+        full step plan (using the playbook), then execute without per-step
+        thinking. One ~10s CLI call instead of 6-8. Falls back to the
+        interactive loop (returns None) if planning/execution doesn't pan out."""
+        brain = get_brain()
+        sys_prompt = (
+            SYSTEM_PROMPT
+            + "\n\nMODE: DIRECT PLAN. Is task ka POORA step-plan EK JSON ARRAY "
+            "mein do — koi prose nahi, sirf array. Har step: "
+            '{"tool":"<name>","args":{...}}. Chat-app send ke liye playbook ke '
+            "mutabiq: type_in_window(Search box, naam) → press_keys enter → "
+            "type_in_window(message box, text, submit:true). ui_tree/ask steps "
+            "MAT do (yeh plan blind chalega) — sirf action steps."
+        )
+        try:
+            raw = await asyncio.to_thread(
+                brain.think, sys_prompt, [{"role": "user", "content": f"TASK: {task}"}]
+            )
+        except BrainError:
+            return None
+        plan = _parse_step_array(raw)
+        if not plan or len(plan) > 10:
+            return None
+
+        steps: list[dict] = []
+        typed: dict | None = None
+        for i, st in enumerate(plan, 1):
+            tool_name = str(st.get("tool") or "")
+            args = st.get("args") or {}
+            if tool_name not in TOOLS or tool_name in ("screenshot_check",):
+                continue
+            _set_progress(True, _TOOL_PROGRESS.get(tool_name, "Kaam kar raha hun…"), i)
+            pre_count = None
+            if tool_name in ("set_text", "type_in_window", "attach_file", "pick_file_in_dialog"):
+                _vtxt = _basename_if_path(str(args.get("file_path") or args.get("text") or ""))
+                if _vtxt:
+                    pre_count = await asyncio.to_thread(
+                        _count_text_in_window, str(args.get("window_title") or ""), _vtxt)
+            result = await self._run_tool(tool_name, args)
+            steps.append({"step": i, "tool": tool_name, "args": args, "ok": bool(result.get("ok"))})
+            if not result.get("ok"):
+                log.info("direct_plan_step_failed_fallback", tool=tool_name)
+                return None  # plan didn't fit reality — interactive loop will handle
+            if tool_name in ("set_text", "type_in_window", "attach_file", "pick_file_in_dialog"):
+                txt = str(args.get("text") or args.get("file_path") or "")
+                # the LAST send-ish step is what we verify (message, not search)
+                art = _basename_if_path(txt)
+                if art and not ("search" in str(args.get("element_name", "")).lower()):
+                    typed = {"window": str(args.get("window_title") or ""), "text": art, "before": pre_count}
+
+        if typed:
+            present = await asyncio.to_thread(
+                _verify_present, typed["window"], typed["text"], typed.get("before")
+            )
+            if not present:
+                return None  # not confirmed — let the interactive loop retry properly
+            _maybe_save_recipe(intent, steps)
+            log.info("engine_direct_plan_done", steps=len(steps))
+            return {"ok": True, "reply": f"✅ {typed['text'][:50]} bhej diya (confirm ho gaya).", "steps": steps}
+        return None  # nothing verifiable — use interactive loop
+
     async def run(
         self,
         task: str,
@@ -373,6 +435,15 @@ class UniversalEngine:
                     if replayed is not None:
                         return replayed
                     log.info("replay_fell_back_to_normal", intent=intent)
+                elif intent.startswith(("send:", "sendfile:")):
+                    # New chat-app send with no recipe yet: plan it in ONE brain
+                    # call and execute (instead of 6-8 slow think rounds). Falls
+                    # back to the interactive loop if the plan doesn't fit.
+                    _set_progress(True, "Plan bana raha hun…", 0)
+                    planned = await self._try_direct_plan(task, intent)
+                    if planned is not None:
+                        return planned
+                    log.info("direct_plan_fell_back_to_normal", intent=intent)
 
         if transcript:
             # Resuming after a clarifying question — the user's reply is the answer.
