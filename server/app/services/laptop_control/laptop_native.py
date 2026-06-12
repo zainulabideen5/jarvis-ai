@@ -305,6 +305,25 @@ class LaptopNative:
         except Exception as e:
             return {"ok": False, "error": str(e)[:200]}
 
+    def resize_window(self, title_substring: str, width: int = 1000, height: int = 720) -> dict:
+        """Window ko chhota karo (full-screen na rahe) aur thoda side pe rakho,
+        taake dashboard bhi nazar aaye. Maximized ho to pehle restore."""
+        try:
+            import pygetwindow as gw
+            for w in gw.getAllWindows():
+                if title_substring.lower() in (w.title or "").lower() and w.title:
+                    try:
+                        if getattr(w, "isMaximized", False):
+                            w.restore()
+                        w.resizeTo(int(width), int(height))
+                        w.moveTo(40, 40)
+                        return {"ok": True, "title": w.title, "size": [width, height]}
+                    except Exception as e:
+                        return {"ok": False, "error": str(e)[:120]}
+            return {"ok": False, "error": "window not found"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200]}
+
     def active_window_title(self) -> str:
         """Title of the currently-foreground window (jahan user abhi hai)."""
         try:

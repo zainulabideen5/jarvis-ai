@@ -248,12 +248,27 @@ def press_keys(keys: list, window_title: str = "") -> dict:
 
 
 def open_app(name: str) -> dict:
-    """App kholo (naam ya exe path)."""
+    """App kholo (naam ya exe path). Khulne ke baad window ko chhoti karta hai
+    (full-screen na rahe) taake dashboard bhi nazar aaye."""
     from app.services.laptop_control.apps import AppController
+    from app.services.laptop_control.laptop_native import LaptopNative
     if SecurityBlocker.is_app_blocked(name):
         return {"ok": False, "error": "blocked: sensitive app"}
     ok, msg = AppController.open_app(name)
+    if ok:
+        import time as _t
+        _t.sleep(1.5)
+        try:
+            LaptopNative.get().resize_window(name)
+        except Exception:
+            pass
     return {"ok": ok, "message": msg}
+
+
+def resize_window(title: str, width: int = 1000, height: int = 720) -> dict:
+    """Kisi window ko chhota karo (full-screen na rahe)."""
+    from app.services.laptop_control.laptop_native import LaptopNative
+    return LaptopNative.get().resize_window(title, width, height)
 
 
 def close_app(name: str) -> dict:
@@ -362,6 +377,7 @@ TOOLS = {
     "pick_file_in_dialog": pick_file_in_dialog,
     "press_keys": press_keys,
     "open_app": open_app,
+    "resize_window": resize_window,
     "close_app": close_app,
     "open_url": open_url,
     "powershell": powershell,
@@ -379,7 +395,8 @@ TOOLS_DOC = """
 - type_in_window {"window_title": "...", "element_name": "Type a message", "text": "...", "submit": true} — chat box mein type karo. element_name DO (box ka naam) taake focus mile. submit:true DO to type ke baad Enter bhi dab jaata hai (message bhej deta hai) — chat ke liye yeh EK call kaafi hai, alag press_keys ki zaroorat nahi
 - pick_file_in_dialog {"file_path": "..."} — file attach karne ke liye: attach button dabane ke BAAD jo Windows "Open" dialog khulta hai, usme yeh file path daal kar Open dabata hai (har app pe same)
 - press_keys {"keys": ["ctrl","l"], "window_title": "..."} — hotkey/key (enter, tab, esc, f5). App-level keys ke liye window_title do taake sahi window mein jayein
-- open_app {"name": "chrome|teams|notepad|excel|..."} — app launch
+- open_app {"name": "chrome|teams|whatsapp|notepad|..."} — app launch (khulne ke baad window chhoti ho jaati hai, full-screen nahi)
+- resize_window {"title": "...", "width": 1000, "height": 720} — window ko chhota karo agar full-screen ho
 - close_app {"name": "..."} — app band
 - open_url {"url": "https://..."} — user ke default browser mein URL
 - powershell {"command": "..."} — files/system ka sab kaam (rename, move, list, create). Input-injection (SendKeys) BLOCKED hai — typing ke liye set_text/type_in_window use karo
