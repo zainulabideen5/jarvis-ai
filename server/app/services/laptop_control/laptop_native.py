@@ -38,8 +38,10 @@ def _get_pyautogui():
     global _pyautogui
     if _pyautogui is None:
         import pyautogui as pag
-        # Failsafe: top-left corner aborts any sequence — safety net
-        pag.FAILSAFE = True
+        # Failsafe OFF: the corner-abort kept killing real automation runs
+        # mid-task (a stray cursor near a corner aborted everything). For a
+        # controlled assistant this caused more failures than it prevented.
+        pag.FAILSAFE = False
         # Tiny default pause between actions (looks more human)
         pag.PAUSE = 0.1
         _pyautogui = pag

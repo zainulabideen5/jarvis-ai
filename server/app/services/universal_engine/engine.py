@@ -66,9 +66,17 @@ asli naam jo user ne diya aur jo ui_tree mein dikhe wohi use karo.)
 2. ui_tree BINA filter (sirf window_title). Ek hi dafa — poori window dekho.
    NOTE: contact aksar [TreeItem]/[ListItem] "Chat <NAAM> Available"; message box
    aksar [Edit]/[Document] "Type a message"/"Type a new message"; search [ComboBox].
-3. Contact list mein dikhe to SEEDHE click_element (EXACT naam jo dikha,
-   control_type sahi do). Na dikhe to "Search" ComboBox click → type_in_window
-   se naam → ui_tree → contact click.
+3. Contact KHOLNA — sabse reliable tareeqa SEARCH hai (har chat app mein chalta
+   hai, contact-list click se behtar — kyunki list click aksar chat switch nahi
+   karta):
+   a. Search box dhoondo (jaise "Search" / "Search or start a new chat" — Edit
+      ya ComboBox). type_in_window se usme contact ka naam likho (submit false).
+   b. wait 1s, phir press_keys {{"keys":["enter"], "window_title":"<app>"}} —
+      isse top result khul jaata hai.
+   c. ui_tree se CONFIRM karo ke chat khul gayi (header pe us shaks ka naam
+      aaye). Agar header pe purana/galat naam ho to chat switch NAHI hui —
+      message mat bhejo, dobara search se kholo. (Galat banday ko bhejna sabse
+      bari ghalti hai — pehle confirm karo sahi chat khuli hai.)
 4. Message likho aur bhejo — chat apps (Teams/WhatsApp/Slack/Discord/koi bhi)
    ka box WebView hota hai jismein set_text kaam NAHI karta, isliye:
      type_in_window {{"window_title":"<app naam>", "element_name":"<box ka naam,
