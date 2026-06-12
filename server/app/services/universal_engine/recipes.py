@@ -72,6 +72,12 @@ def intent_key(task: str) -> str | None:
     app = _detect_app(low)
     if not app:
         return None
+    # File/attachment sends are a DIFFERENT flow than plain messages — keep
+    # their recipe separate so a text-only recipe never replays for a file task.
+    file_words = ("file", "document", "doc ", "docx", "pdf", "image", "photo",
+                  "tasveer", "attach", "attachment", ".xls", ".png", ".jpg", ".zip")
+    if any(w in low for w in file_words):
+        return f"sendfile:{app}"
     action = None
     for canon, words in _ACTIONS.items():
         if any(w in low for w in words):

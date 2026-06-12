@@ -84,6 +84,23 @@ asli naam jo user ne diya aur jo ui_tree mein dikhe wohi use karo.)
 INTENT: casual/typo app names samjho ("msteams"→Teams, "wts app"→WhatsApp).
 After a user answer, continue from where you left off.
 
+PLAYBOOK — chat app mein FILE / DOCUMENT / PDF / image bhejna:
+1. Pehle file ka FULL path nikalo: agar user ne sirf naam diya (e.g. "report.pdf")
+   to find_files {{"query":"report.pdf"}} se poora path lo.
+2. Contact ka chat kholo (upar wale message playbook ki tarah).
+3. ui_tree (bina filter) → compose area mein "Attach"/"Add"/paperclip jaisa
+   button dhoondo (Teams mein aksar "Attach" ya "Add"). click_element us par.
+4. ui_tree → menu se "Upload from this device" / "Attach a file" / "This device"
+   click_element. Isse ek Windows file dialog khulta hai (window title aksar "Open").
+5. ui_tree {{"window_title":"Open"}} → "File name" Edit dhoondo. set_text us mein
+   poora file path daalo, phir click_element "Open" button (ya press_keys enter
+   with window_title "Open"). Dialog band ho jayega, file attach ho jayegi.
+6. Agar saath message bhi bhejna ho to message box mein type_in_window se likho.
+7. Send: press_keys {{"keys":["enter"], "window_title":"<chat window>"}} ya Send button.
+8. ui_tree se verify ke file/message chat mein nazar aa raha hai → done.
+   (File dialog ek NATIVE window hai — uske "File name" box pe set_text theek
+   kaam karta hai, woh WebView nahi.)
+
 EXECUTION GUIDELINES:
 1. ui_tree before interacting inside a window — read real element names, don't guess.
 2. To put text in a field, ALWAYS prefer set_text (UIA — safe, no keystrokes, no
