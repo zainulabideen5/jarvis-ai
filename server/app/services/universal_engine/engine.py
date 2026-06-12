@@ -187,11 +187,13 @@ class UniversalEngine:
         brain = get_brain()
         sys_prompt = (
             "Tum ek desktop-automation planner ho. Neeche ek SAVED RECIPE hai "
-            "(steps jo pichli dafa is tarah ke kaam mein chale). NAYE TASK ke "
-            "liye poora step-plan EK JSON ARRAY mein do — wahi structure, bas "
-            "variable cheezein (contact ka naam, message text) naye task ke "
-            "hisaab se update karo. Contact ke liye sirf naam do (poora UI label "
-            "nahi — system khud match kar lega). Sirf JSON array do, aur kuch nahi.\n"
+            "(steps jo pichli dafa is tarah ke kaam mein chale). Usme PLACEHOLDERS "
+            "hain: <CONTACT> = jis shaks ko bhejna, <MESSAGE> = message text, "
+            "<EMAIL> = email address. NAYE TASK ke hisaab se in placeholders ko "
+            "ASAL value se replace karke poora step-plan EK JSON ARRAY mein do — "
+            "baqi structure aur UI labels (jaise 'Type a message') waise hi rakho. "
+            "<CONTACT> ke liye sirf naam likho (system khud match kar lega). "
+            "Sirf JSON array do, aur kuch nahi.\n"
             "Har step: {\"tool\":\"<name>\",\"args\":{...}}.\n\n"
             f"SAVED RECIPE:\n{json.dumps(recipe, ensure_ascii=False)}"
         )
@@ -203,6 +205,13 @@ class UniversalEngine:
             return None
         plan = _parse_step_array(raw)
         if not plan:
+            return None
+
+        # Safety: if the planner left any placeholder unfilled, don't run it
+        # (would send literal "<MESSAGE>") — fall back to normal mode.
+        if any(ph in json.dumps(plan, ensure_ascii=False)
+               for ph in ("<CONTACT>", "<MESSAGE>", "<EMAIL>")):
+            log.info("replay_placeholder_unfilled_fallback", intent=intent)
             return None
 
         steps: list[dict] = []
@@ -491,10 +500,30 @@ def _parse_step_array(raw: str) -> list[dict] | None:
     return out or None
 
 
+def _scrub_recipe_step(tool: str, args: dict) -> dict:
+    """Replace person-specific / message values with PLACEHOLDERS before saving
+    a recipe — so we NEVER bake a specific name/email/message into memory. The
+    recipe stays a generic template; replay fills <CONTACT>/<MESSAGE>/<EMAIL>
+    from the new task. (Honors the no-hardcoded-names rule.)"""
+    out = dict(args or {})
+    if tool in ("type_in_window", "set_text") and "text" in out:
+        out["text"] = "<MESSAGE>"
+    if tool == "click_element" and str(out.get("control_type", "")) in ("TreeItem", "ListItem"):
+        out["element_name"] = "<CONTACT>"     # the person clicked in a list
+    if tool == "send_email":
+        for k in ("to", "recipient"):
+            if k in out:
+                out[k] = "<EMAIL>"
+        if "body" in out:
+            out["body"] = "<MESSAGE>"
+    return out
+
+
 def _maybe_save_recipe(intent, steps: list[dict]) -> None:
-    """Save the ok automation steps of a successful run as a reusable recipe."""
+    """Save the ok automation steps of a successful run as a reusable recipe.
+    Values are scrubbed to placeholders — no real names/emails/messages stored."""
     clean = [
-        {"tool": s["tool"], "args": s.get("args", {})}
+        {"tool": s["tool"], "args": _scrub_recipe_step(s["tool"], s.get("args", {}))}
         for s in steps
         if s.get("ok") and s.get("tool") in TOOLS
         and s.get("tool") not in ("wait", "list_windows")
