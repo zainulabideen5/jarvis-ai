@@ -420,8 +420,11 @@ class ChatService:
         # folder named "notepad". Such tasks need the universal engine, which
         # actually drives the app via UIA. Destructive ones still confirm.
         if self._needs_engine_first(user_message):
-            needs_confirm = any(
-                w in user_message.lower() for w in self._DESTRUCTIVE_WORDS
+            # Confirm before sending to a person (chat-app send) or anything
+            # destructive — so a wrong message never goes out silently.
+            needs_confirm = (
+                self._is_chat_app_send(user_message)
+                or any(w in user_message.lower() for w in self._DESTRUCTIVE_WORDS)
             )
             engine_result = await self._run_engine_task(
                 user_message, attachments, needs_confirm=needs_confirm
@@ -1179,18 +1182,36 @@ class ChatService:
         low = f" {message.strip().lower()} "
         return any(v in low for v in cls._TASK_VERBS)
 
-    # Strong signals that only the universal engine can handle: typing into an
-    # app, or a multi-step "do X and then Y" command. Sends (whatsapp/teams/
-    # email) are deliberately excluded — those keep their dedicated path.
     _TYPING_VERBS = ("likho", "likh do", "likh de", "type karo", "type kar", "type kr")
     _IN_APP_MARKERS = ("usme", "us me", "isme", "is me", "us mein", "is mein")
-    _SEND_WORDS = ("whatsapp", "whats app", "teams", "email", "gmail", "mail")
+    # Chat apps the universal engine drives directly (NOT email — email has a
+    # working SMTP path). Casual/typo spellings included.
+    _CHAT_APPS = ("whatsapp", "whats app", "wts app", "watsapp", "teams", "team",
+                  "slack", "discord", "telegram")
+    _SEND_VERBS = ("bhej", "bhejo", "bhaj", "bhejna", "bhejde", "send", "message",
+                   "msg", "likh", "likho", "bol do", "keh do")
+
+    @classmethod
+    def _is_chat_app_send(cls, message: str) -> bool:
+        """A 'send something to someone on Teams/WhatsApp/etc.' command — these
+        go straight to the universal engine (with confirm), NOT the old chat.
+        If a chat-app name appears with a send verb OR a 'ko/pe' (to/on)
+        preposition, it's a send (e.g. 'sami ko whatsapp pe salam')."""
+        low = f" {message.strip().lower()} "
+        has_app = any(a in low for a in cls._CHAT_APPS)
+        if not has_app:
+            return False
+        has_verb = any(v in low for v in cls._SEND_VERBS) or cls._looks_like_task(message)
+        has_prep = " ko " in low or " pe " in low or " pa " in low or " par " in low
+        return has_verb or has_prep
 
     @classmethod
     def _needs_engine_first(cls, message: str) -> bool:
         low = f" {message.strip().lower()} "
-        if any(w in low for w in cls._SEND_WORDS):
-            return False  # sends keep their dedicated confirm path
+        # Chat-app sends → engine (this was the bug: they used to fall through
+        # to the conversational LLM which just chatted instead of sending).
+        if cls._is_chat_app_send(message):
+            return True
         # Typing into an app, or operating inside one
         if any(v in low for v in cls._TYPING_VERBS):
             return True
