@@ -197,6 +197,18 @@ def type_in_window(window_title: str, text: str, element_name: str = "", submit:
     return r
 
 
+def attach_file(window_title: str, element_name: str, file_path: str) -> dict:
+    """Chat box mein file/document attach karo (FAST) — file clipboard pe copy
+    karke message box mein paste hoti hai. element_name = message box ka naam
+    (jaise "Type a message"). Iske baad press_keys enter se bhej do.
+    Attach button/dialog ki zaroorat NAHI — yeh seedha tareeqa hai.
+    """
+    from app.services.laptop_control.laptop_native import LaptopNative
+    if SecurityBlocker.is_app_blocked(window_title):
+        return {"ok": False, "error": "blocked: sensitive app"}
+    return LaptopNative.get().attach_file(window_title, element_name, file_path)
+
+
 def press_keys(keys: list, window_title: str = "") -> dict:
     """Hotkey/key. SAFE: agar window_title diya to use foreground laa kar verify
     karke bhejta hai (warna user ki window mein keys ja sakti hain).
@@ -330,6 +342,7 @@ TOOLS = {
     "click_element": click_element,
     "set_text": set_text,
     "type_in_window": type_in_window,
+    "attach_file": attach_file,
     "press_keys": press_keys,
     "open_app": open_app,
     "close_app": close_app,
@@ -347,6 +360,7 @@ TOOLS_DOC = """
 - click_element {"window_title": "...", "element_name": "...", "control_type": "Button|MenuItem|Hyperlink|TabItem|ListItem"} — element activate (SAFE: UIA invoke, mouse churaye bina)
 - set_text {"window_title": "...", "element_name": "...", "text": "...", "control_type": "Edit"} — field mein text daalo. YEH PREFERRED hai text ke liye — keyboard nahi chalata, user ki window mein leak nahi hota, antivirus flag nahi karta
 - type_in_window {"window_title": "...", "element_name": "Type a message", "text": "...", "submit": true} — chat box mein type karo. element_name DO (box ka naam) taake focus mile. submit:true DO to type ke baad Enter bhi dab jaata hai (message bhej deta hai) — chat ke liye yeh EK call kaafi hai, alag press_keys ki zaroorat nahi
+- attach_file {"window_title": "...", "element_name": "Type a message", "file_path": "..."} — chat box mein file/document attach karo (FAST: clipboard paste, koi dialog nahi). Iske baad press_keys enter se bhejo
 - press_keys {"keys": ["ctrl","l"], "window_title": "..."} — hotkey/key (enter, tab, esc, f5). App-level keys ke liye window_title do taake sahi window mein jayein
 - open_app {"name": "chrome|teams|notepad|excel|..."} — app launch
 - close_app {"name": "..."} — app band

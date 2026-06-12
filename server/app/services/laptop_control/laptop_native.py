@@ -148,6 +148,44 @@ class LaptopNative:
             log.info("paste_failed_fallback_type", error=str(e)[:120])
             return self.type_text(text)
 
+    def attach_file(self, window_title: str, element_name: str, file_path: str) -> dict:
+        """Attach a file to a chat compose box the FAST, reliable way: copy the
+        file to the clipboard (CF_HDROP) and paste it (Ctrl+V) into the focused
+        message box. Teams/WhatsApp/Slack/Discord all turn a pasted file into a
+        real attachment — no attach-button/menu/file-dialog dance needed.
+        """
+        import os
+        import struct
+        p = os.path.abspath(os.path.expandvars(os.path.expanduser((file_path or "").strip().strip('"'))))
+        if not os.path.isfile(p):
+            return {"ok": False, "error": f"file nahi mili: {p}"}
+        try:
+            import win32clipboard
+            # DROPFILES struct: pFiles offset=20, pt(0,0), fNC=0, fWide=1, then
+            # the file list as UTF-16LE, double-null terminated.
+            files = p + "\0\0"
+            data = struct.pack("<IiiII", 20, 0, 0, 0, 1) + files.encode("utf-16-le")
+            win32clipboard.OpenClipboard()
+            try:
+                win32clipboard.EmptyClipboard()
+                win32clipboard.SetClipboardData(win32clipboard.CF_HDROP, data)
+            finally:
+                win32clipboard.CloseClipboard()
+        except Exception as e:
+            return {"ok": False, "error": f"clipboard set fail: {str(e)[:150]}"}
+
+        # Focus the compose box, then paste the file into it.
+        fe = self.focus_element(window_title, element_name)
+        if not fe.get("ok"):
+            fg = self.focus_and_verify(window_title)
+            if not fg.get("ok"):
+                return {"ok": False, "error": f"focus fail: {fe.get('error')}"}
+        pag = _get_pyautogui()
+        time.sleep(0.2)
+        pag.hotkey("ctrl", "v")
+        time.sleep(1.0)  # let the app upload/render the attachment chip
+        return {"ok": True, "attached": os.path.basename(p)}
+
     def press_key(self, key: str) -> dict:
         """Press a single key (e.g. 'enter', 'tab', 'esc', 'f5')."""
         try:
