@@ -357,6 +357,9 @@ class UniversalEngine:
         for step_no in range(1, max_steps + 1):
             raw = None
             last_err: BrainError | None = None
+            # Show "thinking" so the UI doesn't look frozen during the (slow,
+            # for CLI) brain call — otherwise the previous step's line lingers.
+            _set_progress(True, "Soch raha hun…", step_no)
             # The CLI's safety classifier is flaky on borderline automation
             # transcripts — a straight retry usually passes. 3 attempts.
             for attempt in range(3):
