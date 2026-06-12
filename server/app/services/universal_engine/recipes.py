@@ -111,6 +111,9 @@ def intent_from_steps(steps: list[dict]) -> str | None:
 # validated Teams flows). Placeholders get filled at replay time. open_app is
 # safe even if the app is already open (it just focuses).
 _DEFAULT_RECIPES = {
+    # Teams' compose box is a WebView that does NOT accept set_text
+    # (ValuePattern) — only keyboard works, so this is the reliable flow.
+    # window_title is the STABLE "Teams" substring (full title changes per chat).
     "send:teams": [
         {"tool": "open_app", "args": {"name": "teams"}},
         {"tool": "wait", "args": {"seconds": 2}},

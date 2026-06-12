@@ -69,17 +69,20 @@ asli naam jo user ne diya aur jo ui_tree mein dikhe wohi use karo.)
 3. Contact list mein dikhe to SEEDHE click_element (EXACT naam jo dikha,
    control_type sahi do). Na dikhe to "Search" ComboBox click → type_in_window
    se naam → ui_tree → contact click.
-4. Message likho AUR bhejo EK hi call mein — WebView box par set_text/sirf-click
-   kaam nahi karta. type_in_window mein box ka naam + submit:true do:
-     type_in_window {{"window_title":"<title>", "element_name":"Type a message",
-                      "text":"<msg>", "submit":true}}
-   (submit:true type ke baad Enter khud dabata hai — alag press_keys MAT karo,
-   woh focus tor deta hai aur Enter fail ho jata hai.)
-5. EK verify: ui_tree {{"window_title":"<title>", "name_contains":"<apne message ke
+4. Message likho aur bhejo — chat apps (Teams/WhatsApp/Slack/Discord/koi bhi)
+   ka box WebView hota hai jismein set_text kaam NAHI karta, isliye:
+     type_in_window {{"window_title":"<app naam>", "element_name":"<box ka naam,
+                      e.g. Type a message>", "text":"<msg>", "submit":true}}
+   (submit:true type ke baad Enter dabata hai. window_title ke liye app ka SHORT
+   naam do jaise "Teams"/"WhatsApp" — poora title mat do kyunki woh contact ke
+   saath badalta rehta hai.)
+5. EK verify: ui_tree {{"window_title":"<app>", "name_contains":"<message ke
    pehle 3-4 lafz>"}}. Message nazar aaye → FAURAN done "bhej diya". (Filter
-   zaroori hai warna lambi chat mein message nahi dikhega.)
-   Agar EK verify pe na dikhe → DOBARA mat bhejo (spam) — done ke saath honestly
-   batao "type kar diya, confirm nahi hua".
+   zaroori hai.) Na dikhe → DOBARA mat bhejo — honestly batao "confirm nahi hua".
+
+WINDOW TITLE: hamesha app ka SHORT/STABLE naam use karo ("Teams", "WhatsApp",
+"Notepad") — poora title (jaise "Chat | Ahmed | Microsoft Teams") contact badalne
+par badal jaata hai aur agla step fail ho jaata hai.
 
 INTENT: casual/typo app names samjho ("msteams"→Teams, "wts app"→WhatsApp).
 After a user answer, continue from where you left off.
