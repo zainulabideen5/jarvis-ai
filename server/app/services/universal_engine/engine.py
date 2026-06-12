@@ -199,13 +199,19 @@ class UniversalEngine:
         return cls._instance
 
     async def _run_tool(self, tool_name: str, args: dict) -> dict:
-        """Execute one tool call safely. Shared by normal loop + recipe replay."""
+        """Execute one tool call safely (with a timeout so a hung UIA call on a
+        WebView window can never freeze the whole task forever). Shared by the
+        normal loop + recipe replay."""
         fn = TOOLS.get(tool_name)
         if fn is None:
             return {"ok": False, "error": f"unknown tool: {tool_name}. Valid: {', '.join(TOOLS)}"}
         call_args = _filter_args(fn, args)
         try:
-            return await asyncio.to_thread(lambda: fn(**call_args))
+            return await asyncio.wait_for(
+                asyncio.to_thread(lambda: fn(**call_args)), timeout=40
+            )
+        except asyncio.TimeoutError:
+            return {"ok": False, "error": f"{tool_name} 40s mein poora nahi hua (hang) — skip"}
         except TypeError as e:
             return {"ok": False, "error": f"galat args: {e}"}
         except Exception as e:
