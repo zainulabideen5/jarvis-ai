@@ -259,12 +259,22 @@ class UniversalEngine:
             if tool_name not in TOOLS:
                 continue
             _set_progress(True, _TOOL_PROGRESS.get(tool_name, "Kaam kar raha hun…"), i)
+            # Count existing copies of the message BEFORE sending (so verify
+            # detects a NEW one, not an old identical "hello").
+            pre_count = None
+            if tool_name in ("set_text", "type_in_window", "attach_file", "pick_file_in_dialog"):
+                _vtxt = _basename_if_path(str(args.get("file_path") or args.get("text") or ""))
+                if _vtxt:
+                    pre_count = await asyncio.to_thread(
+                        _count_text_in_window, str(args.get("window_title") or ""), _vtxt)
             result = await self._run_tool(tool_name, args)
             steps.append({"step": i, "tool": tool_name, "args": args, "ok": bool(result.get("ok"))})
-            if tool_name in ("set_text", "type_in_window") and result.get("ok"):
-                txt, win = str(args.get("text") or ""), str(args.get("window_title") or "")
-                if txt and win:
-                    typed = {"window": win, "text": txt}
+            if result.get("ok") and tool_name in ("set_text", "type_in_window", "attach_file", "pick_file_in_dialog"):
+                txt = str(args.get("text") or args.get("file_path") or "")
+                win = str(args.get("window_title") or "")
+                art = _basename_if_path(txt)
+                if art:
+                    typed = {"window": win if art == txt else "", "text": art, "before": pre_count}
             # An action step failing means the recipe didn't fit → relearn.
             if not result.get("ok") and tool_name in (
                 "open_app", "click_element", "set_text", "type_in_window",
@@ -276,7 +286,7 @@ class UniversalEngine:
         # Verify the send actually landed before claiming success.
         if typed:
             present = await asyncio.to_thread(
-                _verify_present, typed["window"], typed["text"]
+                _verify_present, typed["window"], typed["text"], typed.get("before")
             )
             if not present:
                 return None  # couldn't confirm via replay → let normal mode try
@@ -408,7 +418,7 @@ class UniversalEngine:
                 # silently failed (e.g. focus didn't land on a WebView box).
                 if typed and _claims_success(reply):
                     present = await asyncio.to_thread(
-                        _verify_present, typed["window"], typed["text"]
+                        _verify_present, typed["window"], typed["text"], typed.get("before")
                     )
                     if not present:
                         log.warning("engine_unverified_send", window=typed["window"])
@@ -483,6 +493,16 @@ class UniversalEngine:
                         "steps": steps,
                     }
 
+            # BEFORE a send, count how many times this text already appears in
+            # the chat (old identical msgs like "hello"). After sending we need
+            # to see a NEW occurrence — otherwise verify falsely matches an old one.
+            pre_count = None
+            if tool_name in ("set_text", "type_in_window", "attach_file", "pick_file_in_dialog"):
+                _vtxt = _basename_if_path(str(args.get("file_path") or args.get("text") or ""))
+                _vwin = str(args.get("window_title") or "")
+                if _vtxt:
+                    pre_count = await asyncio.to_thread(_count_text_in_window, _vwin, _vtxt)
+
             result = await self._run_tool(tool_name, args)
 
             # Track what to verify later (message text OR attached filename).
@@ -493,14 +513,14 @@ class UniversalEngine:
                     if txt:
                         art = _basename_if_path(txt)
                         if art != txt:          # was a file path (e.g. Open dialog)
-                            typed = {"window": "", "text": art}   # scan chat windows
+                            typed = {"window": "", "text": art, "before": pre_count}   # scan chat windows
                         else:
-                            typed = {"window": win, "text": txt}
-                elif tool_name == "pick_file_in_dialog":
+                            typed = {"window": win, "text": txt, "before": pre_count}
+                elif tool_name in ("pick_file_in_dialog", "attach_file"):
                     art = _basename_if_path(str(args.get("file_path") or ""))
                     if art:
                         # verify against chat-app windows (dialog is gone by then)
-                        typed = {"window": "", "text": art}
+                        typed = {"window": "", "text": art, "before": pre_count}
 
             log.info(
                 "engine_step",
@@ -531,7 +551,7 @@ class UniversalEngine:
         # in the window, the send DID succeed — don't report a false failure.
         if typed:
             present = await asyncio.to_thread(
-                _verify_present, typed["window"], typed["text"]
+                _verify_present, typed["window"], typed["text"], typed.get("before")
             )
             if present:
                 return {
@@ -699,10 +719,41 @@ def _basename_if_path(s: str) -> str:
     return s
 
 
-def _verify_present(window_title: str, text: str) -> bool:
-    """Confirm `text` (message or filename) shows in the target window, or in
-    ANY open chat-app window (covers the case where the tracked window was a
-    transient file dialog)."""
+def _count_text_in_window(window_title: str, text: str) -> int:
+    """How many times `text` appears across the chat-app window(s). Used to
+    detect a NEWLY sent message vs old identical ones."""
+    needle = (text or "").strip()[:40].lower()
+    if not needle:
+        return 0
+    total = 0
+    try:
+        from app.services.universal_engine import tools
+        from app.services.universal_engine.recipes import _detect_app
+        windows = []
+        if window_title:
+            windows.append(window_title)
+        for w in tools.list_windows().get("windows", []):
+            t = w.get("title", "")
+            if _detect_app(t) and t not in windows:
+                windows.append(t)
+        for wt in windows:
+            tree = tools.ui_tree(wt, name_contains=needle)
+            hay = (tree.get("elements", "") or "").lower()
+            total = max(total, hay.count(needle))  # max across windows (avoid double-count)
+    except Exception:
+        pass
+    return total
+
+
+def _verify_present(window_title: str, text: str, before: int | None = None) -> bool:
+    """Confirm the send actually happened. If we know how many times the text
+    appeared BEFORE sending, require the count to have INCREASED (a new message
+    appeared) — this defeats false-positives from old identical messages like
+    'hello'. If no baseline, fall back to plain presence."""
+    if before is not None:
+        now = _count_text_in_window(window_title, text)
+        return now > before
+    # No baseline — plain presence (best effort)
     if window_title and _text_present_in_window(window_title, text):
         return True
     try:
