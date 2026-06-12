@@ -125,6 +125,29 @@ class LaptopNative:
         except Exception as e:
             return {"ok": False, "error": str(e)[:200]}
 
+    def paste_text(self, text: str) -> dict:
+        """Type INSTANTLY by setting the clipboard and pressing Ctrl+V.
+
+        Char-by-char typing is slow (and slower on WebView apps). Pasting puts
+        the whole message in one shot regardless of length. Falls back to
+        keyboard typing if the clipboard isn't available.
+        """
+        try:
+            import win32clipboard
+            win32clipboard.OpenClipboard()
+            try:
+                win32clipboard.EmptyClipboard()
+                win32clipboard.SetClipboardText(text, win32clipboard.CF_UNICODETEXT)
+            finally:
+                win32clipboard.CloseClipboard()
+            pag = _get_pyautogui()
+            time.sleep(0.05)
+            pag.hotkey("ctrl", "v")
+            return {"ok": True, "len": len(text), "method": "paste"}
+        except Exception as e:
+            log.info("paste_failed_fallback_type", error=str(e)[:120])
+            return self.type_text(text)
+
     def press_key(self, key: str) -> dict:
         """Press a single key (e.g. 'enter', 'tab', 'esc', 'f5')."""
         try:
@@ -406,17 +429,26 @@ class LaptopNative:
             if window is None:
                 return {"ok": False, "error": f"window '{window_title}' nahi mili"}
             target = None
-            for e in window.descendants():
-                try:
-                    info = e.element_info
-                    if control_type and (info.control_type or "").lower() != control_type.lower():
+            # FAST PATH: direct child_window match (no full-tree scan)
+            try:
+                import re as _re
+                cand = window.child_window(title_re=f".*{_re.escape(element_name)}.*")
+                if cand.exists(timeout=1):
+                    target = cand
+            except Exception:
+                target = None
+            # Fallback: scan, but stop at the first Edit/Document match
+            if target is None:
+                for e in window.descendants():
+                    try:
+                        info = e.element_info
+                        if control_type and (info.control_type or "").lower() != control_type.lower():
+                            continue
+                        if element_name.lower() in (info.name or "").lower():
+                            target = e
+                            break
+                    except Exception:
                         continue
-                    nm = (info.name or "")
-                    if element_name.lower() in nm.lower():
-                        target = e
-                        break
-                except Exception:
-                    continue
             if target is None:
                 return {"ok": False, "error": f"'{element_name}' element nahi mila"}
             try:

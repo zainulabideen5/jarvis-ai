@@ -69,15 +69,17 @@ asli naam jo user ne diya aur jo ui_tree mein dikhe wohi use karo.)
 3. Contact list mein dikhe to SEEDHE click_element (EXACT naam jo dikha,
    control_type sahi do). Na dikhe to "Search" ComboBox click → type_in_window
    se naam → ui_tree → contact click.
-4. Message box mein likho — WebView box par set_text/sirf-click KAAM NAHI karta.
-   type_in_window mein box ka naam DO (woh khud focus karega):
-     type_in_window {{"window_title":"<title>", "element_name":"Type a message", "text":"<msg>"}}
-5. press_keys {{"keys":["enter"], "window_title":"<title>"}} — bhej do.
-6. EK verify: ui_tree {{"window_title":"<title>", "name_contains":"<apne message ke
-   pehle 3-4 lafz>"}}. Agar message nazar aaye → FAURAN done. (Filter zaroori hai
-   warna lambi chat mein message cap se aage ho kar nahi dikhega.)
+4. Message likho AUR bhejo EK hi call mein — WebView box par set_text/sirf-click
+   kaam nahi karta. type_in_window mein box ka naam + submit:true do:
+     type_in_window {{"window_title":"<title>", "element_name":"Type a message",
+                      "text":"<msg>", "submit":true}}
+   (submit:true type ke baad Enter khud dabata hai — alag press_keys MAT karo,
+   woh focus tor deta hai aur Enter fail ho jata hai.)
+5. EK verify: ui_tree {{"window_title":"<title>", "name_contains":"<apne message ke
+   pehle 3-4 lafz>"}}. Message nazar aaye → FAURAN done "bhej diya". (Filter
+   zaroori hai warna lambi chat mein message nahi dikhega.)
    Agar EK verify pe na dikhe → DOBARA mat bhejo (spam) — done ke saath honestly
-   batao "type kar diya, confirm nahi hua". "bhej diya" sirf verify hone par.
+   batao "type kar diya, confirm nahi hua".
 
 INTENT: casual/typo app names samjho ("msteams"→Teams, "wts app"→WhatsApp).
 After a user answer, continue from where you left off.

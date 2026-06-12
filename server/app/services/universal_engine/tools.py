@@ -158,13 +158,14 @@ def set_text(window_title: str, element_name: str, text: str, control_type: str 
     return LaptopNative.get().uia_type(window_title, element_name, text, control_type)
 
 
-def type_in_window(window_title: str, text: str, element_name: str = "") -> dict:
+def type_in_window(window_title: str, text: str, element_name: str = "", submit: bool = False) -> dict:
     """Keyboard se type karo — chat apps (Teams/WhatsApp) ke message box ke liye.
 
     element_name DO (jaise "Type a message") — woh box ko UIA se FOCUS karega
-    phir type karega (WebView apps mein click se focus nahi milta). Agar
-    element_name na do to poori window focus karke type karta hai. Dono soorat
-    mein foreground verify hota hai — user ki window mein keys leak nahi hote.
+    phir type karega (WebView apps mein click se focus nahi milta).
+    submit=True DO to type ke FAURAN BAAD Enter bhi dabata hai — usi focus pe,
+    bina dobara window focus kiye (warna message box se caret hat jaata aur
+    Enter kaam nahi karta). Chat message bhejne ke liye yehi ek call kaafi hai.
     """
     from app.services.laptop_control.laptop_native import LaptopNative
     if not window_title:
@@ -186,7 +187,14 @@ def type_in_window(window_title: str, text: str, element_name: str = "") -> dict
         fg = nat.focus_and_verify(window_title)
         if not fg.get("ok"):
             return {"ok": False, "error": f"safe type fail: {fg.get('error')}"}
-    return nat.type_text(text)
+    r = nat.paste_text(text)   # instant clipboard paste (not char-by-char)
+    if r.get("ok") and submit:
+        # Enter on the SAME focus — no re-focus (which would lose the caret).
+        import time as _t
+        _t.sleep(0.2)
+        enter = nat.press_key("enter")
+        r["submitted"] = bool(enter.get("ok"))
+    return r
 
 
 def press_keys(keys: list, window_title: str = "") -> dict:
@@ -338,7 +346,7 @@ TOOLS_DOC = """
 - ui_tree {"window_title": "...", "control_type": "?", "name_contains": "?"} — window ke elements dekho (AI ki aankhein). Buttons/Edits/MenuItems sab naam ke saath
 - click_element {"window_title": "...", "element_name": "...", "control_type": "Button|MenuItem|Hyperlink|TabItem|ListItem"} — element activate (SAFE: UIA invoke, mouse churaye bina)
 - set_text {"window_title": "...", "element_name": "...", "text": "...", "control_type": "Edit"} — field mein text daalo. YEH PREFERRED hai text ke liye — keyboard nahi chalata, user ki window mein leak nahi hota, antivirus flag nahi karta
-- type_in_window {"window_title": "...", "text": "..."} — keyboard se type, SIRF jab set_text na chale (rich editors). Window ko verify-foreground laa kar type karta hai
+- type_in_window {"window_title": "...", "element_name": "Type a message", "text": "...", "submit": true} — chat box mein type karo. element_name DO (box ka naam) taake focus mile. submit:true DO to type ke baad Enter bhi dab jaata hai (message bhej deta hai) — chat ke liye yeh EK call kaafi hai, alag press_keys ki zaroorat nahi
 - press_keys {"keys": ["ctrl","l"], "window_title": "..."} — hotkey/key (enter, tab, esc, f5). App-level keys ke liye window_title do taake sahi window mein jayein
 - open_app {"name": "chrome|teams|notepad|excel|..."} — app launch
 - close_app {"name": "..."} — app band
