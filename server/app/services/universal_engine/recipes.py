@@ -117,14 +117,9 @@ _DEFAULT_RECIPES = {
         {"tool": "click_element", "args": {"window_title": "Teams", "element_name": "<CONTACT>", "control_type": "TreeItem"}},
         {"tool": "type_in_window", "args": {"window_title": "Teams", "element_name": "Type a message", "text": "<MESSAGE>", "submit": True}},
     ],
-    "sendfile:teams": [
-        {"tool": "open_app", "args": {"name": "teams"}},
-        {"tool": "wait", "args": {"seconds": 2}},
-        {"tool": "click_element", "args": {"window_title": "Teams", "element_name": "<CONTACT>", "control_type": "TreeItem"}},
-        {"tool": "attach_file", "args": {"window_title": "Teams", "element_name": "Type a message", "file_path": "<FILE>"}},
-        {"tool": "wait", "args": {"seconds": 2}},
-        {"tool": "press_keys", "args": {"keys": ["enter"], "window_title": "Teams"}},
-    ],
+    # NOTE: no sendfile:teams default — clipboard-paste attach doesn't work in
+    # Teams' WebView. File-sends explore the real "Attach files" button flow
+    # (normal mode) and learn it; then replay fast.
 }
 
 

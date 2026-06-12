@@ -84,19 +84,23 @@ asli naam jo user ne diya aur jo ui_tree mein dikhe wohi use karo.)
 INTENT: casual/typo app names samjho ("msteams"→Teams, "wts app"→WhatsApp).
 After a user answer, continue from where you left off.
 
-PLAYBOOK — chat app mein FILE / DOCUMENT / PDF / image bhejna (FAST tareeqa):
-1. File ka FULL path nikalo: agar user ne sirf naam/path diya to find_files se
-   poora path lo. (Agar task mein already full path diya hai to wahi use karo —
-   attach button/dialog ki ZAROORAT NAHI.)
-2. Contact ka chat kholo (message playbook step 1-3 ki tarah: ui_tree → contact
-   click_element).
-3. ui_tree → message box ka naam dekho (jaise "Type a message").
-4. attach_file {{"window_title":"<title>", "element_name":"<message box naam>",
-   "file_path":"<poora path>"}} — yeh file ko seedha box mein paste kar deta hai
-   (clipboard se). Attach button/menu/dialog bilkul mat chhuo.
-5. Thoda ruko (file upload hone do): wait {{"seconds":2}}.
-6. Send: press_keys {{"keys":["enter"], "window_title":"<title>"}}.
-7. ui_tree se verify ke file/attachment chat mein nazar aa raha hai → done.
+PLAYBOOK — chat app mein FILE / DOCUMENT / PDF / image bhejna:
+1. File ka FULL path nikalo: agar sirf naam diya to find_files se poora path lo.
+   (Task mein full path diya ho to wahi use karo.)
+2. Contact ka chat kholo (ui_tree → contact click_element).
+3. ui_tree (Button filter) → attach button dhoondo. Teams mein woh
+   "Attach files" hota hai (image ke liye "Attach media"). click_element us par.
+4. ui_tree → agar koi menu/dialog khula:
+   - "Upload from this device" / "This device" jaisa option ho to click_element.
+   - Phir Windows file dialog khulta hai (window title aksar "Open").
+5. ui_tree {{"window_title":"Open"}} → "File name" Edit mein set_text se poora
+   path daalo → click_element "Open" button (ya press_keys enter window "Open").
+6. wait {{"seconds":2}} (file upload hone do).
+7. Send: click_element "Send" button (Teams mein "Send"), ya press_keys
+   {{"keys":["ctrl","enter"], "window_title":"<chat window>"}}.
+8. VERIFY: ui_tree {{"window_title":"<chat>", "name_contains":"<file ka naam>"}} —
+   file/attachment chat mein nazar aaye TABHI done "bhej diya". Na dikhe to
+   honestly batao — jhoot mat bolo.
 
 EXECUTION GUIDELINES:
 1. ui_tree before interacting inside a window — read real element names, don't guess.
@@ -254,7 +258,7 @@ class UniversalEngine:
         # Verify the send actually landed before claiming success.
         if typed:
             present = await asyncio.to_thread(
-                _text_present_in_window, typed["window"], typed["text"]
+                _verify_present, typed["window"], typed["text"]
             )
             if not present:
                 return None  # couldn't confirm via replay → let normal mode try
@@ -383,7 +387,7 @@ class UniversalEngine:
                 # silently failed (e.g. focus didn't land on a WebView box).
                 if typed and _claims_success(reply):
                     present = await asyncio.to_thread(
-                        _text_present_in_window, typed["window"], typed["text"]
+                        _verify_present, typed["window"], typed["text"]
                     )
                     if not present:
                         log.warning("engine_unverified_send", window=typed["window"])
@@ -460,12 +464,21 @@ class UniversalEngine:
 
             result = await self._run_tool(tool_name, args)
 
-            # Track what got typed, so we can verify a "sent" claim later.
-            if tool_name in ("set_text", "type_in_window") and result.get("ok"):
-                txt = str(args.get("text") or "")
+            # Track what to verify later (message text OR attached filename).
+            if result.get("ok"):
                 win = str(args.get("window_title") or "")
-                if txt and win:
-                    typed = {"window": win, "text": txt}
+                if tool_name in ("set_text", "type_in_window"):
+                    txt = str(args.get("text") or "")
+                    if txt:
+                        art = _basename_if_path(txt)
+                        if art != txt:          # was a file path (e.g. Open dialog)
+                            typed = {"window": "", "text": art}   # scan chat windows
+                        else:
+                            typed = {"window": win, "text": txt}
+                elif tool_name == "attach_file":
+                    art = _basename_if_path(str(args.get("file_path") or ""))
+                    if art:
+                        typed = {"window": win, "text": art}
 
             log.info(
                 "engine_step",
@@ -496,7 +509,7 @@ class UniversalEngine:
         # in the window, the send DID succeed — don't report a false failure.
         if typed:
             present = await asyncio.to_thread(
-                _text_present_in_window, typed["window"], typed["text"]
+                _verify_present, typed["window"], typed["text"]
             )
             if present:
                 return {
@@ -622,6 +635,33 @@ def _claims_success(reply: str) -> bool:
     if any(h in low for h in ("confirm nahi", "nahi kar paya", "nahi kar saka", "shayad", "pakka nahi")):
         return False
     return any(w in low for w in _SUCCESS_WORDS)
+
+
+def _basename_if_path(s: str) -> str:
+    """If the string is a file path, return just the filename; else unchanged."""
+    s = (s or "").strip().strip('"')
+    if "\\" in s or "/" in s:
+        seg = s.replace("/", "\\").rstrip("\\").split("\\")[-1]
+        return seg or s
+    return s
+
+
+def _verify_present(window_title: str, text: str) -> bool:
+    """Confirm `text` (message or filename) shows in the target window, or in
+    ANY open chat-app window (covers the case where the tracked window was a
+    transient file dialog)."""
+    if window_title and _text_present_in_window(window_title, text):
+        return True
+    try:
+        from app.services.universal_engine import tools
+        from app.services.universal_engine.recipes import _detect_app
+        for w in tools.list_windows().get("windows", []):
+            t = w.get("title", "")
+            if _detect_app(t) and _text_present_in_window(t, text):
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def _text_present_in_window(window_title: str, text: str) -> bool:
