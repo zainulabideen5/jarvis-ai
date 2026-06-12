@@ -18,13 +18,31 @@ from app.core.logging import get_logger
 
 log = get_logger(__name__)
 
-# Apps we can recognise in a task → used to build the intent key. Generic, not
-# hardcoded behaviour: just helps group "same kind of task" together.
-_APPS = (
-    "teams", "whatsapp", "whats app", "slack", "discord", "telegram", "gmail",
-    "outlook", "excel", "word", "powerpoint", "notepad", "chrome", "edge",
-    "explorer", "spotify", "vscode", "calculator",
-)
+# App name VARIANTS (casual Roman Urdu / typos) → canonical name. Both the
+# task-text lookup and the step-based fallback map to the SAME canonical, so a
+# recipe saved from "team pa" replays for "teams pe" and vice versa. (Key fix:
+# "team" and "teams" must resolve to the same recipe.)
+_APP_VARIANTS = {
+    "teams": "teams", "team": "teams", "ms teams": "teams", "msteams": "teams",
+    "whatsapp": "whatsapp", "whats app": "whatsapp", "wattsapp": "whatsapp",
+    "watsapp": "whatsapp", "whatsap": "whatsapp",
+    "slack": "slack", "discord": "discord", "telegram": "telegram",
+    "gmail": "gmail", "outlook": "outlook",
+    "excel": "excel", "word": "word", "powerpoint": "powerpoint", "ppt": "powerpoint",
+    "notepad": "notepad", "chrome": "chrome", "edge": "edge", "explorer": "explorer",
+    "spotify": "spotify", "vscode": "vscode", "vs code": "vscode",
+    "calculator": "calculator",
+}
+# Longest variants first so "ms teams" matches before "teams"/"team".
+_APP_KEYS_SORTED = sorted(_APP_VARIANTS, key=len, reverse=True)
+
+
+def _detect_app(text: str) -> str | None:
+    low = (text or "").lower()
+    for variant in _APP_KEYS_SORTED:
+        if variant in low:
+            return _APP_VARIANTS[variant]
+    return None
 # Action verbs (Roman Urdu + English, with common typo/spelling variants) →
 # grouped to a canonical action. Users type casual Roman Urdu ("bhaj", "bhj"),
 # so keep this generous.
@@ -51,7 +69,7 @@ def intent_key(task: str) -> str | None:
     """Derive a stable key like 'send:teams' from a task. None if we can't
     confidently group it (then the engine just runs normally — no recipe)."""
     low = f" {(task or '').lower()} "
-    app = next((a.replace(" ", "") for a in _APPS if a in low), None)
+    app = _detect_app(low)
     if not app:
         return None
     action = None
@@ -72,18 +90,12 @@ def intent_from_steps(steps: list[dict]) -> str | None:
     typed = False
     for s in steps:
         args = s.get("args", {}) or {}
-        win = str(args.get("window_title") or "").lower()
-        for a in _APPS:
-            if a in win:
-                app = a.replace(" ", "")
-                break
+        win = str(args.get("window_title") or "")
+        app = app or _detect_app(win)
         if s.get("tool") in ("type_in_window", "set_text"):
             typed = True
         if s.get("tool") == "open_app":
-            name = str(args.get("name") or "").lower()
-            for a in _APPS:
-                if a in name:
-                    app = app or a.replace(" ", "")
+            app = app or _detect_app(str(args.get("name") or ""))
     if not app:
         return None
     return f"{'send' if typed else 'open'}:{app}"
