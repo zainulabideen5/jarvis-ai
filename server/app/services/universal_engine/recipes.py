@@ -107,23 +107,10 @@ def intent_from_steps(steps: list[dict]) -> str | None:
     return f"{'send' if typed else 'open'}:{app}"
 
 
-# Built-in recipes for common apps — make the FIRST run fast (these are the
-# validated Teams flows). Placeholders get filled at replay time. open_app is
-# safe even if the app is already open (it just focuses).
-_DEFAULT_RECIPES = {
-    # Teams' compose box is a WebView that does NOT accept set_text
-    # (ValuePattern) — only keyboard works, so this is the reliable flow.
-    # window_title is the STABLE "Teams" substring (full title changes per chat).
-    "send:teams": [
-        {"tool": "open_app", "args": {"name": "teams"}},
-        {"tool": "wait", "args": {"seconds": 2}},
-        {"tool": "click_element", "args": {"window_title": "Teams", "element_name": "<CONTACT>", "control_type": "TreeItem"}},
-        {"tool": "type_in_window", "args": {"window_title": "Teams", "element_name": "Type a message", "text": "<MESSAGE>", "submit": True}},
-    ],
-    # NOTE: no sendfile:teams default — clipboard-paste attach doesn't work in
-    # Teams' WebView. File-sends explore the real "Attach files" button flow
-    # (normal mode) and learn it; then replay fast.
-}
+# No app is special — NO built-in recipes. EVERY app (Teams, WhatsApp, Slack,
+# anything) learns its own flow on first use, then replays fast. This keeps the
+# system fully general and avoids baking in any app- or name-specific behaviour.
+_DEFAULT_RECIPES: dict = {}
 
 
 class RecipeStore:
