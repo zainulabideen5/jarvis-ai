@@ -790,7 +790,7 @@ class LaptopNative:
         except Exception as e:
             log.warning("open_app_via_start_failed", app=name, err=str(e)[:120])
 
-    def chat_send(self, app: str, contact: str, message: str, off_screen: bool = True) -> dict:
+    def chat_send(self, app: str, contact: str, message: str, off_screen: bool = False) -> dict:
         """DETERMINISTIC chat-app TEXT send — pure Python, NO LLM loop, NO
         ui_tree scans (which hang). Works for ANY contact on ANY laptop:
 
