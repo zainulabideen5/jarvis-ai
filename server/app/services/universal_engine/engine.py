@@ -729,6 +729,16 @@ def _post_task_cleanup(steps: list[dict], origin: str | None) -> None:
     except Exception:
         pass
 
+    # ALL-ROUNDER: also minimize whatever app is currently in FRONT — any app
+    # (calculator, browser, editor…), not just chat apps. Zain wants EVERY app
+    # to minimize + return to the dashboard after ANY task.
+    try:
+        cur = nat.active_window_title() or ""
+        if cur and cur.lower() not in [x.lower() for x in targets]:
+            targets.append(cur)
+    except Exception:
+        pass
+
     _t.sleep(0.5)  # let the send settle before we hide the window
     for w in targets:
         if origin_low and (w.lower() in origin_low or origin_low in w.lower()):
