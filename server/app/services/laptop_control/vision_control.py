@@ -296,13 +296,181 @@ class VisionController:
             return f"key: {key}"
         return "unknown action"
 
+    # ---------------- recipe: learn once → replay fast (ANY app) ----------------
+
+    def _recipe_key(self, task: str):
+        """Stable key so a learned vision flow replays for the SAME kind of task
+        on ANY app — chat sends via the engine's intent_key, else a generic
+        scrubbed key. (Universal, not per-app.)"""
+        try:
+            from app.services.universal_engine.recipes import intent_key
+            k = intent_key(task)
+            if k:
+                return f"vision:{k}"
+        except Exception:
+            pass
+        import re as _re
+        s = _re.sub(r"['\"0-9]+", " ", (task or "").lower())
+        s = _re.sub(r"\s+", " ", s).strip()
+        return f"vision:gen:{s[:60]}" if len(s) >= 3 else None
+
+    def _record_action(self, action, marks, offset):
+        """Normalize an executed action to ABSOLUTE screen coords so it can be
+        replayed without a screenshot next time."""
+        kind = (action.get("action") or "").lower()
+        ox, oy = offset
+        if kind in ("click", "click_type"):
+            m = next((x for x in marks if x["idx"] == action.get("mark")), None)
+            if not m:
+                return None
+            return {"kind": "click", "x": m["cx"], "y": m["cy"],
+                    "text": action.get("text") if kind == "click_type" else None}
+        if kind in ("click_xy", "click_type_xy"):
+            try:
+                return {"kind": "click", "x": int(action["x"]) + ox,
+                        "y": int(action["y"]) + oy,
+                        "text": action.get("text") if kind == "click_type_xy" else None}
+            except (TypeError, ValueError, KeyError):
+                return None
+        if kind == "type":
+            return {"kind": "type", "text": action.get("text", "")}
+        if kind == "key":
+            return {"kind": "key", "key": action.get("key", "enter")}
+        return None
+
+    def _replay_exec(self, a, pag, nat):
+        if a["kind"] == "click":
+            pag.click(a["x"], a["y"]); time.sleep(0.4)
+            if a.get("text"):
+                nat.paste_text(a["text"], clear_first=True)
+        elif a["kind"] == "type":
+            nat.paste_text(a.get("text", ""), clear_first=False)
+        elif a["kind"] == "key":
+            k = (a.get("key") or "enter").lower()
+            if "+" in k:
+                pag.hotkey(*[p.strip() for p in k.split("+")])
+            else:
+                pag.press(k)
+        time.sleep(0.3)
+
+    def _try_replay(self, task, key, recipe):
+        """FAST PATH: adapt the typed text to the new task (one CLI call), run
+        the saved clicks/types with NO per-step screenshots, then HONESTLY
+        verify (one screenshot). On any doubt → None (relearn via full vision).
+        Never claims success blindly — the window could have moved."""
+        from app.services.task_control import is_stopped
+        from app.services.laptop_control.laptop_native import LaptopNative, _get_pyautogui
+        nat = LaptopNative.get()
+        pag = _get_pyautogui()
+        adapted = self._adapt_recipe_text(task, recipe)
+        if adapted is None:
+            return None
+        for a in adapted:
+            if is_stopped():
+                return {"ok": False, "reply": "🛑 Boss, rok diya.", "steps": 0}
+            try:
+                self._replay_exec(a, pag, nat)
+            except Exception as e:
+                log.warning("vision_replay_step_failed", err=str(e)[:100])
+                return None
+        if not self._verify_done(task):       # honest gate
+            log.info("vision_replay_unverified_relearn", key=key)
+            return None
+        log.info("vision_replay_done", key=key, steps=len(adapted))
+        return {"ok": True, "reply": "⚡ Ho gaya (yaad tha, jaldi kiya).",
+                "steps": len(adapted), "replayed": True}
+
+    def _adapt_recipe_text(self, task, recipe):
+        """One CLI call: update the recipe's typed-text slots for the new task
+        (clicks stay). No text slots → pure replay (instant)."""
+        slots = [i for i, a in enumerate(recipe) if a.get("text")]
+        if not slots:
+            return recipe
+        import json as _json
+        cur = [recipe[i].get("text") for i in slots]
+        prompt = (
+            "Learned plan ke typed-texts ko naye task ke hisaab se update karo "
+            "(clicks waise hi). Purane texts (order me): "
+            f"{_json.dumps(cur, ensure_ascii=False)}. Naya task: {task}. "
+            "Sirf ek JSON array do — utne hi naye texts, usi order me."
+        )
+        out = self._cli_text(prompt)
+        if not out:
+            return None
+        try:
+            arr = _json.loads(out[out.find("["):out.rfind("]") + 1])
+            if len(arr) != len(slots):
+                return None
+            adapted = [dict(a) for a in recipe]
+            for j, i in enumerate(slots):
+                adapted[i]["text"] = str(arr[j])
+            return adapted
+        except Exception:
+            return None
+
+    def _cli_text(self, prompt):
+        """Text-only CLI call (no image) — quick recipe text adaptation."""
+        import json as _json
+        import shutil
+        import subprocess
+        exe = shutil.which("claude.cmd") or shutil.which("claude")
+        if not exe:
+            return None
+        try:
+            proc = subprocess.run(
+                [exe, "-p", "--model", "opus", "--output-format", "json",
+                 "--max-turns", "1", "--tools", "", "--strict-mcp-config",
+                 "--disallowedTools", "mcp__*"],
+                input=prompt, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=40, shell=False)
+            if proc.returncode != 0:
+                return None
+            return _json.loads((proc.stdout or "").strip()).get("result", "")
+        except Exception:
+            return None
+
+    def _verify_done(self, task):
+        """One screenshot → CLI: did the task complete? Honest gate for replay."""
+        window = self._foreground_window()
+        shot, _off = self._capture(window)
+        try:
+            out = self._cli_vision(
+                f"TASK: {task}\nKya yeh task is screen pe COMPLETE ho chuka hai? "
+                'Sirf JSON do: {"done": true} ya {"done": false}.', shot)
+        finally:
+            try:
+                os.remove(shot)
+            except OSError:
+                pass
+        return bool(self._parse(out).get("done"))
+
     # ---------------- main loop ----------------
 
     def run(self, task: str, max_steps: int = 9) -> dict:
-        """See→act loop. Returns {ok, reply, steps}."""
+        """See→act loop WITH learn→replay. First time: vision figures it out and
+        SAVES the click/type flow. Next time: replays it fast (1 adapt call, no
+        per-step screenshots) with an honest verify + relearn fallback. Works
+        for ANY app."""
         from app.services.task_control import clear_stop, is_stopped
-        clear_stop()   # fresh task → drop any stale stop flag
+        from app.services.universal_engine.recipes import RecipeStore
+        clear_stop()
+
+        # FAST PATH: replay a learned flow for this kind of task
+        key = self._recipe_key(task)
+        if key:
+            try:
+                recipe = RecipeStore.get(key)
+            except Exception:
+                recipe = None
+            if recipe:
+                log.info("vision_replay_try", key=key)
+                replayed = self._try_replay(task, key, recipe)
+                if replayed is not None:
+                    return replayed
+                log.info("vision_replay_fell_back", key=key)
+
         history: list[str] = []
+        executed: list[dict] = []
         for step in range(1, max_steps + 1):
             if is_stopped():
                 log.info("vision_stopped_by_user", step=step)
@@ -326,11 +494,21 @@ class VisionController:
             log.info("vision_step", step=step, action=kind, why=action.get("why", "")[:60])
 
             if kind == "done":
+                # LEARN: save the click/type flow so next time replays fast.
+                if key and executed:
+                    try:
+                        RecipeStore.save(key, executed)
+                        log.info("vision_recipe_saved", key=key, steps=len(executed))
+                    except Exception as e:
+                        log.warning("vision_recipe_save_failed", err=str(e)[:100])
                 return {"ok": True, "reply": action.get("reply", "Ho gaya."), "steps": step}
             if kind == "fail":
                 return {"ok": False, "reply": action.get("reply", "Nahi ho saka."), "steps": step}
 
+            rec = self._record_action(action, marks, offset)
             result = self._execute(action, marks, offset)
+            if rec:
+                executed.append(rec)
             history.append(f"{step}. {kind} -> {result}")
             time.sleep(0.6)   # let the UI settle before the next screenshot
 
