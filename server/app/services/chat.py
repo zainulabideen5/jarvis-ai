@@ -1515,15 +1515,11 @@ class ChatService:
                 pc = self._parse_chat_app_and_contact(task)
                 if pc:
                     app, contact = pc
-                    if nat.chat_file_method(app) == "paste":
-                        # WhatsApp etc. — reliable clipboard-paste file send
-                        log.info("deterministic_file_send_try", app=app, contact=contact, file=file_path)
-                        native = await asyncio.to_thread(nat.chat_send_file, app, contact, file_path, "")
-                    else:
-                        # Teams etc. — attach button/dialog is fragile via UIA;
-                        # use VISION (sees the attach button + Send) directly.
-                        log.info("dialog_file_send_via_vision", app=app, contact=contact)
-                        native = await asyncio.to_thread(self._run_vision, task)
+                    # WhatsApp = clipboard paste; Teams etc. = attach button +
+                    # OS Open dialog (uia_type the path — vision can't pick files
+                    # from a dialog reliably, so we do NOT route files to vision).
+                    log.info("deterministic_file_send_try", app=app, contact=contact, file=file_path)
+                    native = await asyncio.to_thread(nat.chat_send_file, app, contact, file_path, "")
             else:
                 parsed = self._parse_chat_send(task)
                 if parsed:
