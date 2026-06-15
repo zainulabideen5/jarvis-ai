@@ -532,6 +532,24 @@ class UniversalEngine:
                             ),
                             "steps": steps,
                         }
+                    # RIGHT-RECIPIENT GUARD: the message sent — but did it go to
+                    # the intended person? The open chat window's title carries
+                    # the contact name. If it doesn't match the recipient from
+                    # the task, it likely went to the WRONG chat.
+                    recipient = _extract_recipient(task)
+                    if recipient and not await self._bounded(
+                        _active_chat_is, recipient, timeout=10, default=True):
+                        log.warning("engine_wrong_recipient", recipient=recipient)
+                        return {
+                            "ok": False,
+                            "reply": (
+                                f"⚠️ Boss, message bhej to diya lekin lagta hai woh "
+                                f"'{recipient}' ke chat mein NAHI gaya (galat chat khuli "
+                                "thi). Zara khud dekh lein — main pakka galat banday ko "
+                                "bhejne se rok raha hoon."
+                            ),
+                            "steps": steps,
+                        }
                 log.info("engine_done", task=task[:80], steps=len(steps))
                 # LEARN: save the working step sequence as a recipe so next
                 # time this kind of task replays fast.
@@ -840,6 +858,50 @@ def _basename_if_path(s: str) -> str:
         seg = s.replace("/", "\\").rstrip("\\").split("\\")[-1]
         return seg or s
     return s
+
+
+_RECIPIENT_STOP = {
+    "teams", "team", "whatsapp", "whats", "app", "slack", "discord", "telegram",
+    "pe", "pa", "par", "mein", "me", "ko", "se", "ka", "ki", "kar", "karo", "kr",
+    "send", "bhej", "bhejo", "bhaj", "message", "msg", "yeh", "ye", "ek",
+}
+
+
+def _extract_recipient(task: str) -> str:
+    """Pull the likely recipient name from a send task. 'teams pe zaid ko hello
+    bhej' -> 'zaid'. Best-effort — used only to GUARD against wrong-chat sends."""
+    low = (task or "").lower()
+    for sep in (" ko ", " to "):
+        if sep in low:
+            before = low.split(sep)[0]
+            words = [w for w in before.replace(",", " ").split() if w not in _RECIPIENT_STOP and len(w) > 1]
+            if words:
+                return " ".join(words[-2:])  # last 1-2 words = the name
+    return ""
+
+
+def _active_chat_is(recipient: str) -> bool:
+    """True if the intended recipient's chat looks open (their name is in the
+    active chat-app window's title, e.g. 'Chat | Zaid Moeen | Microsoft Teams').
+    Conservative: returns True when unsure so it never false-blocks a good send."""
+    rec = (recipient or "").strip().lower()
+    if not rec:
+        return True
+    first = rec.split()[0]  # match on first name too (zaid ~ Zaid Moeen)
+    try:
+        from app.services.laptop_control.laptop_native import LaptopNative
+        from app.services.universal_engine.recipes import _detect_app
+        nat = LaptopNative.get()
+        act = (nat.active_window_title() or "").lower()
+        if _detect_app(act):                 # active window is a chat app
+            return rec in act or first in act
+        for w in nat.list_open_windows().get("windows", []):
+            t = (w.get("title", "") or "").lower()
+            if _detect_app(t) and (rec in t or first in t):
+                return True
+        return False
+    except Exception:
+        return True
 
 
 def _count_text_in_window(window_title: str, text: str) -> int:

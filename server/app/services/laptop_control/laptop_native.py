@@ -127,12 +127,13 @@ class LaptopNative:
         except Exception as e:
             return {"ok": False, "error": str(e)[:200]}
 
-    def paste_text(self, text: str) -> dict:
+    def paste_text(self, text: str, clear_first: bool = True) -> dict:
         """Type INSTANTLY by setting the clipboard and pressing Ctrl+V.
 
-        Char-by-char typing is slow (and slower on WebView apps). Pasting puts
-        the whole message in one shot regardless of length. Falls back to
-        keyboard typing if the clipboard isn't available.
+        clear_first: select existing content (Ctrl+A) before pasting so the new
+        text REPLACES whatever was there — otherwise residual text in a search/
+        compose box gets doubled (e.g. "Zaid MoeenZaid Moeen").
+        Falls back to keyboard typing if the clipboard isn't available.
         """
         try:
             import win32clipboard
@@ -144,6 +145,9 @@ class LaptopNative:
                 win32clipboard.CloseClipboard()
             pag = _get_pyautogui()
             time.sleep(0.05)
+            if clear_first:
+                pag.hotkey("ctrl", "a")   # select existing → paste replaces it
+                time.sleep(0.05)
             pag.hotkey("ctrl", "v")
             return {"ok": True, "len": len(text), "method": "paste"}
         except Exception as e:
