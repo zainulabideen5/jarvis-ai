@@ -132,6 +132,8 @@ export const api = {
   engineStatus: () => fetchJSON('/engine/status'),
   engineRun: (task) => postJSON('/engine/run', { task }),
   engineProgress: () => fetchJSON('/engine/progress'),
+  // STOP a running task — halts the engine/vision loop at its next step.
+  stopTask: () => postJSON('/stop', {}),
 
   // Office COM check
   officeCheck: () => fetchJSON('/office/check'),

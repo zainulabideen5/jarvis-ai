@@ -211,6 +211,18 @@ export default function ChatPage() {
     }
   };
 
+  const handleStop = async () => {
+    try {
+      await api.stopTask();
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: '🛑 Stop bhej diya — task agle step pe ruk jayega.' },
+      ]);
+    } catch (err) {
+      setMessages((prev) => [...prev, { role: 'assistant', content: `Stop error: ${err.message}` }]);
+    }
+  };
+
   const handleVerificationAction = async (action, label) => {
     setLoading(true);
     try {
@@ -440,11 +452,18 @@ export default function ChatPage() {
 
         {loading && (
           <div className="flex justify-start">
-            <div className="bg-gray-900 border border-gray-800 rounded-xl px-4 py-3">
+            <div className="bg-gray-900 border border-gray-800 rounded-xl px-4 py-3 flex items-center gap-3">
               <p className="text-sm text-cyan-400 flex items-center gap-2">
                 <span className="inline-block w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
                 {progressLine || 'Soch raha hun...'}
               </p>
+              <button
+                onClick={handleStop}
+                className="px-3 py-1 rounded-lg text-xs font-medium bg-red-600 hover:bg-red-500 text-white transition-colors"
+                title="Chalti hui task rok do"
+              >
+                🛑 Stop
+              </button>
             </div>
           </div>
         )}
