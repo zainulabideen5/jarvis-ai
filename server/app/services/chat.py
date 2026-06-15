@@ -1564,6 +1564,21 @@ class ChatService:
                 "awaiting_input": True,
             }
 
+        # ALL-ROUNDER fallback: if the engine couldn't finish via UIA/tools
+        # (WebView/odd UI it couldn't reach), give it EYES — run the vision
+        # loop on the same task. This is what lets JARVIS control *anything*:
+        # fast deterministic → engine (UIA) → vision (sees the screen). Vision
+        # has its own honest verify, so a real fail still reports honestly.
+        if not result.get("ok") and not resume_transcript:
+            log.info("engine_to_vision_fallback", task=task[:80])
+            try:
+                vres = await asyncio.to_thread(self._run_vision, task)
+                if vres.get("ok"):
+                    result = {"ok": True, "reply": vres.get("reply", ""),
+                              "steps": result.get("steps", [])}
+            except Exception as e:
+                log.warning("vision_fallback_failed", error=str(e)[:120])
+
         icon = "✅" if result.get("ok") else "❌"
         return {
             "reply": f"{icon} {result.get('reply', '')}",
