@@ -1205,12 +1205,32 @@ class ChatService:
         has_prep = " ko " in low or " pe " in low or " pa " in low or " par " in low
         return has_verb or has_prep
 
+    # "Where is X / find the X file/folder / iski location" — these MUST hit
+    # the engine (real disk search via find_files/powershell). If they fall to
+    # the chat LLM it INVENTS fake paths (it can't see the disk).
+    _FIND_WORDS = ("location", "kahan", "kahaan", "kaha", "dhoondo", "dhundo",
+                   "dhoond", "find", "locate", "path", "kis folder", "kis jagah",
+                   "where is", "where's")
+    _FIND_NOUNS = ("file", "folder", "document", "pdf", "photo", "image", "song",
+                   "video", "excel", "word", ".pdf", ".docx", ".xlsx", ".png", ".jpg")
+
+    @classmethod
+    def _is_find_query(cls, message: str) -> bool:
+        low = f" {message.strip().lower()} "
+        has_find = any(w in low for w in cls._FIND_WORDS)
+        has_noun = any(n in low for n in cls._FIND_NOUNS)
+        # "location"/"kahan"/"path" with a file/folder noun → real search needed
+        return has_find and has_noun
+
     @classmethod
     def _needs_engine_first(cls, message: str) -> bool:
         low = f" {message.strip().lower()} "
         # Chat-app sends → engine (this was the bug: they used to fall through
         # to the conversational LLM which just chatted instead of sending).
         if cls._is_chat_app_send(message):
+            return True
+        # File/folder find/location → engine (real search, not LLM guesses)
+        if cls._is_find_query(message):
             return True
         # Typing into an app, or operating inside one
         if any(v in low for v in cls._TYPING_VERBS):
