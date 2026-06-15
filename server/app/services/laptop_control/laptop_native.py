@@ -786,9 +786,9 @@ class LaptopNative:
             if not self._focus_any(win, cfg["search"], "Edit"):
                 return {"ok": False, "error": f"{win} ka search box nahi mila"}
         self.paste_text(contact, clear_first=True)   # clear_first → no name doubling
-        time.sleep(0.7)                                # let results populate
+        time.sleep(0.5)                                # let results populate
         pag.press("enter")                             # open top result
-        time.sleep(0.6)                                # let the chat load
+        time.sleep(0.45)                               # let the chat load
         return {"ok": True, "win": win, "cfg": cfg, "pag": pag, "off_screen": off_screen}
 
     def _open_app_via_start(self, name: str) -> None:
@@ -829,9 +829,9 @@ class LaptopNative:
                         "error": f"compose box nahi mila — '{contact}' ki chat shayad open nahi hui"}
 
             self.paste_text(message, clear_first=False)
-            time.sleep(0.3)
+            time.sleep(0.2)
             pag.press("enter")
-            time.sleep(0.6)
+            time.sleep(0.45)
 
             # verify: the compose box should now be EMPTY (message left)
             needle = message.strip().lower()
@@ -843,7 +843,7 @@ class LaptopNative:
                         return {"ok": True, "verified": True,
                                 "msg": f"'{message}' {contact} ko bhej diya"
                                        + (" (off-screen — dikhi bhi nahi)" if off_screen else "")}
-                time.sleep(0.4)
+                time.sleep(0.3)
             return {"ok": False, "verified": False,
                     "msg": f"'{message}' type to kiya par compose box clear nahi hua — ho sakta hai na gaya ho, zara khud dekh lein"}
         finally:

@@ -739,7 +739,7 @@ def _post_task_cleanup(steps: list[dict], origin: str | None) -> None:
         if w and w.lower() not in [x.lower() for x in targets]:
             targets.append(w)
 
-    _t.sleep(0.2)  # let the send settle a moment before hiding the window
+    _t.sleep(0.1)  # let the send settle a moment before hiding the window
     for w in targets:
         if origin_low and (w.lower() in origin_low or origin_low in w.lower()):
             continue  # never minimize the user's own window (dashboard)
