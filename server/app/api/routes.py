@@ -1440,3 +1440,28 @@ async def assign_speaker(client_id: int, body: dict, db: AsyncSession = Depends(
     client.speaker_label = body.get("speaker_label", "")
     await db.commit()
     return {"id": client_id, "speaker_label": client.speaker_label}
+
+
+# ── Vision control (JARVIS sees the screen + acts like a human) ──────
+#
+# Screenshot of the TARGET WINDOW only → Claude CLI (Opus) sees it → click/type
+# like a human (pyautogui). Temp screenshots are deleted right after each step.
+# Works on ANY app/web because it relies on what's visible, not app labels.
+
+
+class VisionDo(BaseModel):
+    task: str
+    max_steps: int = 9
+
+
+@router.post("/vision/do")
+async def vision_do(body: VisionDo):
+    """Run a see→act task. NOTE: moves the real mouse/keyboard."""
+    import asyncio
+    from app.services.laptop_control.vision_control import VisionController
+    try:
+        return await asyncio.to_thread(
+            VisionController.get().run, body.task, body.max_steps
+        )
+    except Exception as e:
+        return {"ok": False, "error": str(e)}

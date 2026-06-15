@@ -413,6 +413,18 @@ class ChatService:
             )
             return engine_result
 
+        # VISION control — if the user asks JARVIS to "dekh ke" / "screen se" /
+        # "vision se" do something, run the see→act loop (works on ANY app/web).
+        if self._is_vision_request(user_message):
+            res = await asyncio.to_thread(self._run_vision, user_message)
+            reply = f"{'✅' if res.get('ok') else '⚠️'} {res.get('reply', res.get('error',''))}"
+            await self._save_message("assistant", reply, "[]")
+            return {"reply": reply, "actions": [{
+                "action": "vision_task",
+                "status": "success" if res.get("ok") else "failed",
+                "message": res.get("reply", ""),
+            }]}
+
         # ENGINE-FIRST for compound / in-app tasks. The legacy intent path is
         # great at atomic commands (open app, find file) but mis-handles
         # multi-step or "type inside an app" tasks — e.g. "notepad kholo AUR
@@ -1297,6 +1309,21 @@ class ChatService:
         to = (action.get("to") or action.get("recipient") or "").strip()
         msg = (action.get("message") or action.get("body") or action.get("text") or "").strip()
         return f"{platform} pe '{to}' ko yeh message bhejo: {msg}"
+
+    # cues that mean "control the screen visually, like a human looking at it"
+    _VISION_CUES = ("dekh ke", "dekh kar", "dekhke", "dekh k ", "screen se",
+                    "screen dekh", "vision se", "vision", "screenshot le",
+                    "khud dekh ke", "screen pe dekh")
+
+    @classmethod
+    def _is_vision_request(cls, message: str) -> bool:
+        low = f" {message.strip().lower()} "
+        return any(cue in low for cue in cls._VISION_CUES)
+
+    def _run_vision(self, task: str) -> dict:
+        """Blocking see→act loop (runs in a thread). Vision = Claude CLI only."""
+        from app.services.laptop_control.vision_control import VisionController
+        return VisionController.get().run(task)
 
     @staticmethod
     def _detect_chat_app(low: str) -> str | None:
