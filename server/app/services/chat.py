@@ -1420,14 +1420,25 @@ class ChatService:
         _PREP = r"pe|pa|par|pr|mein|mei|me|ma|mai|may|mn|men|may"
         contact = _re.sub(rf"(?i)\b({_APP}|{_PREP})\b", " ", before)
         contact = contact.strip(" ,.'\"")
-        # message = the 'after' part; strip a leading 'whatsapp pe/ma' (other order),
-        # surrounding quotes, and any trailing send verb
-        after = _re.sub(rf"(?i)^\s*({_APP})\s+({_PREP})?\s*", "", after)
-        msg = after.strip().strip("'\"").strip()
-        msg = _re.sub(
-            r"(?i)\s+(bhej\s*do|bhej\s*de|bhejo|bhej|bhaj\s*do|bhaj|send\s*kar\s*do|"
-            r"send|kar\s*do|kr\s*do|kardo|likh\s*do|likho|de\s*do|do)\s*$",
-            "", msg).strip().strip("'\"").strip()
+        # message: if the user QUOTED it, take that verbatim — most reliable.
+        # ("message kr 'salam'" → message is "salam", NOT "message kr salam").
+        qm = _re.search(r"['\"]([^'\"]{1,300})['\"]", task)
+        if qm:
+            msg = qm.group(1).strip()
+        else:
+            # else from the 'after' part: strip a leading app+prep (other word
+            # order), then LEADING filler verbs (message/kr/bhej/likho…), then
+            # any TRAILING send verb, then stray quotes.
+            after = _re.sub(rf"(?i)^\s*({_APP})\s+({_PREP})?\s*", "", after)
+            msg = after.strip().strip("'\"").strip()
+            msg = _re.sub(
+                r"(?i)^\s*(message|msg|likho?|likh|bol\s*do|bol|keh\s*do|keh|"
+                r"send|bhej\w*|bhaj\w*|kar\s*do|karo|kar|kr\s*do|kr)\s+",
+                "", msg).strip()
+            msg = _re.sub(
+                r"(?i)\s+(bhej\s*do|bhej\s*de|bhejo|bhej|bhaj\s*do|bhaj|send\s*kar\s*do|"
+                r"send|kar\s*do|kr\s*do|kardo|likh\s*do|likho|de\s*do|do)\s*$",
+                "", msg).strip().strip("'\"").strip()
         if not contact or not msg or len(contact) > 40:
             return None
         return (app, contact, msg)
