@@ -1443,6 +1443,43 @@ class ChatService:
             return None
         return (app, contact, msg)
 
+    async def _llm_extract_send(self, task: str) -> tuple[str, str, str] | None:
+        """Understand ANY phrasing (quotes optional, free-form Roman-Urdu/English)
+        by asking the fast LLM to pull {app, contact, message}. Used when the
+        quick regex isn't confident — so the user can write naturally."""
+        import json as _json
+        prompt = (
+            "Tu ek chat-send command samajhta hai. User ke text se nikaalo aur "
+            "SIRF ye JSON do:\n"
+            '{"app":"whatsapp|teams|slack|discord|telegram|signal|messenger", '
+            '"contact":"jis bande/number ko bhejna hai", '
+            '"message":"sirf bhejne wala text"}\n'
+            "Rules: message = SIRF content (koi verb jaise bhej/message/kr/karo nahi, "
+            "na app ka naam, na contact). Agar yeh message-bhejne ka command NAHI hai "
+            "to {} do.\n\n"
+            f"User: {task}\nJSON:"
+        )
+        try:
+            client = self._get_client()
+            resp = await asyncio.to_thread(
+                lambda: client.chat.completions.create(
+                    model=self._config.groq_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0, max_tokens=200,
+                )
+            )
+            txt = (resp.choices[0].message.content or "").strip()
+            obj = _json.loads(txt[txt.find("{"):txt.rfind("}") + 1])
+            app = self._detect_chat_app(f" {(obj.get('app') or '').lower()} ")
+            contact = (obj.get("contact") or "").strip()
+            message = (obj.get("message") or "").strip()
+            if app and contact and message and len(contact) <= 40:
+                log.info("llm_extract_send", app=app, contact=contact, msg=message[:40])
+                return (app, contact, message)
+        except Exception as e:
+            log.warning("llm_extract_send_failed", err=str(e)[:120])
+        return None
+
     def _parse_chat_app_and_contact(self, task: str) -> tuple[str, str] | None:
         """Lighter parse for FILE sends: just (app, contact), no message needed.
         Works for ANY name — contact comes from the task, nothing hardcoded."""
@@ -1543,7 +1580,10 @@ class ChatService:
                     log.info("deterministic_file_send_try", app=app, contact=contact, file=file_path)
                     native = await asyncio.to_thread(nat.chat_send_file, app, contact, file_path, "")
             else:
+                # clean pattern → instant regex; warna LLM se samajho (any phrasing)
                 parsed = self._parse_chat_send(task)
+                if not parsed:
+                    parsed = await self._llm_extract_send(task)
                 if parsed:
                     app, contact, message = parsed
                     log.info("deterministic_send_try", app=app, contact=contact, msg=message[:40])
