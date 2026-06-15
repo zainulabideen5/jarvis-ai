@@ -724,10 +724,16 @@ def _scrub_recipe_step(tool: str, args: dict) -> dict:
     from the new task. (Honors the no-hardcoded-names rule.)"""
     out = dict(args or {})
     if tool in ("type_in_window", "set_text") and "text" in out:
-        out["text"] = "<MESSAGE>"
-    if tool == "click_element" and str(out.get("control_type", "")) in ("TreeItem", "ListItem"):
+        # Typing into a SEARCH box = the contact name (<CONTACT>); any other
+        # box = the message (<MESSAGE>). Distinguishing these is what lets a
+        # search-based recipe replay correctly for a new name.
+        el = str(out.get("element_name", "")).lower()
+        out["text"] = "<CONTACT>" if "search" in el else "<MESSAGE>"
+    if tool == "click_element" and str(out.get("control_type", "")) in ("TreeItem", "ListItem", "DataItem", "Text"):
         out["element_name"] = "<CONTACT>"     # the person clicked in a list
     if tool == "pick_file_in_dialog" and "file_path" in out:
+        out["file_path"] = "<FILE>"
+    if tool == "attach_file" and "file_path" in out:
         out["file_path"] = "<FILE>"
     if tool == "send_email":
         for k in ("to", "recipient"):
