@@ -416,13 +416,33 @@ class ChatService:
         # VISION control — if the user asks JARVIS to "dekh ke" / "screen se" /
         # "vision se" do something, run the see→act loop (works on ANY app/web).
         if self._is_vision_request(user_message):
-            res = await asyncio.to_thread(self._run_vision, user_message)
-            reply = f"{'✅' if res.get('ok') else '⚠️'} {res.get('reply', res.get('error',''))}"
+            from app.services.laptop_control.laptop_native import LaptopNative
+            nat = LaptopNative.get()
+            # remember where the user was (dashboard) so we can return after
+            origin = await asyncio.to_thread(nat.active_window_title)
+
+            res = None
+            # SPEED: if this is actually a known chat-app send, do it INSTANTLY
+            # via the deterministic path — no slow per-step vision (Zain: "bot
+            # late message gaya"). Vision is the fallback only if that fails.
+            parsed = self._parse_chat_send(user_message)
+            if parsed:
+                app, contact, message = parsed
+                res = await asyncio.to_thread(nat.chat_send, app, contact, message)
+                if not res.get("ok"):
+                    res = None     # deterministic couldn't — fall to vision
+            if res is None:
+                res = await asyncio.to_thread(self._run_vision, user_message)
+
+            # cleanup: minimize the app + bring the dashboard back to front
+            await asyncio.to_thread(self._post_send_cleanup, origin)
+
+            reply = f"{'✅' if res.get('ok') else '⚠️'} {res.get('reply', res.get('msg', res.get('error','')))}"
             await self._save_message("assistant", reply, "[]")
             return {"reply": reply, "actions": [{
                 "action": "vision_task",
                 "status": "success" if res.get("ok") else "failed",
-                "message": res.get("reply", ""),
+                "message": res.get("reply", res.get("msg", "")),
             }]}
 
         # ENGINE-FIRST for compound / in-app tasks. The legacy intent path is
@@ -1325,6 +1345,32 @@ class ChatService:
         from app.services.laptop_control.vision_control import VisionController
         return VisionController.get().run(task)
 
+    def _post_send_cleanup(self, origin: str | None) -> None:
+        """After ANY app-control task: minimize the app we used + bring the
+        user's window (dashboard) back to front. Zain wants this on EVERY path
+        (vision, deterministic chat-send, engine) — not just some. Generic:
+        works for any app, not only chat apps. Runs in a thread (blocking)."""
+        import time as _t
+        from app.services.laptop_control.laptop_native import LaptopNative
+        nat = LaptopNative.get()
+        origin_low = (origin or "").lower().strip()
+        _t.sleep(0.4)   # let the last action settle
+        # 1) minimize whatever app is now in front (the one we just used),
+        #    unless that's the user's own window (dashboard)
+        try:
+            cur = nat.active_window_title() or ""
+            if cur and (not origin_low or (cur.lower() not in origin_low and origin_low not in cur.lower())):
+                nat.minimize_window(cur)
+        except Exception:
+            pass
+        # 2) also minimize any open chat-app window + refocus origin (reuses the
+        #    engine's generic cleanup — covers Teams/WhatsApp left open)
+        try:
+            from app.services.universal_engine.engine import _post_task_cleanup
+            _post_task_cleanup([], origin)
+        except Exception:
+            pass
+
     @staticmethod
     def _detect_chat_app(low: str) -> str | None:
         """Normalize any chat-app mention to a canonical key. Works for ANY of
@@ -1455,6 +1501,7 @@ class ChatService:
             native = None
             from app.services.laptop_control.laptop_native import LaptopNative
             nat = LaptopNative.get()
+            origin = await asyncio.to_thread(nat.active_window_title)  # dashboard
             if file_path:
                 pc = self._parse_chat_app_and_contact(task)
                 if pc:
@@ -1469,6 +1516,8 @@ class ChatService:
                     native = await asyncio.to_thread(nat.chat_send, app, contact, message)
 
             if native and native.get("ok"):
+                # minimize the app + return to the dashboard (every path)
+                await asyncio.to_thread(self._post_send_cleanup, origin)
                 return {
                     "reply": f"✅ {native.get('msg', f'{contact} ko bhej diya')}",
                     "actions": [{
