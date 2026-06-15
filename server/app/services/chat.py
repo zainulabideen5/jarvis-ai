@@ -1298,6 +1298,24 @@ class ChatService:
         msg = (action.get("message") or action.get("body") or action.get("text") or "").strip()
         return f"{platform} pe '{to}' ko yeh message bhejo: {msg}"
 
+    @staticmethod
+    def _detect_chat_app(low: str) -> str | None:
+        """Normalize any chat-app mention to a canonical key. Works for ANY of
+        the common apps — not a hardcoded 2-app list."""
+        import re as _re
+        m = _re.search(
+            r"\b(whats?\s*app|wa|teams?|slack|discord|telegram|tg|signal|messenger|skype)\b", low)
+        if not m:
+            return None
+        tok = m.group(1).replace(" ", "")
+        if tok in ("whatsapp", "whatsap", "wa"):
+            return "whatsapp"
+        if tok.startswith("team"):
+            return "teams"
+        if tok == "tg":
+            return "telegram"
+        return tok
+
     def _parse_chat_send(self, task: str) -> tuple[str, str, str] | None:
         """Parse a clean single-message chat-app send into (app, contact,
         message) for the FAST deterministic native path. Handles both word
@@ -1310,22 +1328,20 @@ class ChatService:
         if not task:
             return None
         low = task.lower()
-        if _re.search(r"\bwhats?\s*app\b|\bwa\b", low):
-            app = "whatsapp"
-        elif _re.search(r"\bteams?\b", low):
-            app = "teams"
-        else:
+        app = self._detect_chat_app(low)
+        if not app:
             return None
         idx = low.find(" ko ")
         if idx == -1:
             return None
         before, after = task[:idx], task[idx + 4:]
+        _APP = r"whats?\s*app|wa|teams?|slack|discord|telegram|tg|signal|messenger|skype"
         # contact = the 'before' part minus the app name + 'pe/par' preposition
-        contact = _re.sub(r"(?i)\b(whats?\s*app|wa|teams?|pe|pa|par|pr|mein|me)\b", " ", before)
+        contact = _re.sub(rf"(?i)\b({_APP}|pe|pa|par|pr|mein|me)\b", " ", before)
         contact = contact.strip(" ,.'\"")
         # message = the 'after' part; strip a leading 'whatsapp pe' (other order),
         # surrounding quotes, and any trailing send verb
-        after = _re.sub(r"(?i)^\s*(whats?\s*app|wa|teams?)\s+(pe|pa|par|pr)?\s*", "", after)
+        after = _re.sub(rf"(?i)^\s*({_APP})\s+(pe|pa|par|pr)?\s*", "", after)
         msg = after.strip().strip("'\"").strip()
         msg = _re.sub(
             r"(?i)\s+(bhej\s*do|bhej\s*de|bhejo|bhej|bhaj\s*do|bhaj|send\s*kar\s*do|"
@@ -1334,6 +1350,27 @@ class ChatService:
         if not contact or not msg or len(contact) > 40:
             return None
         return (app, contact, msg)
+
+    def _parse_chat_app_and_contact(self, task: str) -> tuple[str, str] | None:
+        """Lighter parse for FILE sends: just (app, contact), no message needed.
+        Works for ANY name — contact comes from the task, nothing hardcoded."""
+        import re as _re
+        if not task:
+            return None
+        low = task.lower()
+        app = self._detect_chat_app(low)
+        if not app:
+            return None
+        idx = low.find(" ko ")
+        if idx == -1:
+            rec = self._extract_recipient_from_message(task)
+            return (app, rec) if rec else None
+        _APP = r"whats?\s*app|wa|teams?|slack|discord|telegram|tg|signal|messenger|skype"
+        contact = _re.sub(rf"(?i)\b({_APP}|pe|pa|par|pr|mein|me)\b", " ", task[:idx])
+        contact = contact.strip(" ,.'\"")
+        if not contact or len(contact) > 40:
+            return None
+        return (app, contact)
 
     async def _run_engine_task(
         self,
@@ -1373,28 +1410,46 @@ class ChatService:
                 "pending": [{"token": token, "action": pending}],
             }
 
-        # ── FAST DETERMINISTIC PATH (chat-app text sends) ──
-        # Pure Python: focus → paste name → Enter → FOCUS compose → paste msg
-        # → Enter → verify compose cleared. No slow LLM loop, no hanging
-        # ui_tree. Only for clean single-message sends with no attachment;
-        # anything it can't parse or can't confirm falls through to the engine.
-        if not resume_transcript and not attachments:
-            parsed = self._parse_chat_send(task)
-            if parsed:
-                app, contact, message = parsed
-                from app.services.laptop_control.laptop_native import LaptopNative
-                log.info("deterministic_send_try", app=app, contact=contact, msg=message[:40])
-                native = await asyncio.to_thread(
-                    LaptopNative.get().chat_send, app, contact, message
-                )
-                if native.get("ok"):
-                    return {
-                        "reply": f"✅ {native.get('msg', f'{contact} ko bhej diya')}",
-                        "actions": [{
-                            "action": "chat_send", "status": "success",
-                            "message": native.get("msg", ""),
-                        }],
-                    }
+        # ── FAST DETERMINISTIC PATH (chat-app text + file sends) ──
+        # Pure Python: focus → paste name → Enter → FOCUS compose → paste/attach
+        # → Enter → verify. No slow LLM loop, no hanging ui_tree. Handles a
+        # clean single send; anything it can't parse/confirm falls to the engine.
+        if not resume_transcript:
+            import re as _re
+            # file path: from the dashboard attachment, or the "File path:" line
+            # the augment step embedded into the task (attachments are dropped
+            # across the confirm step, so we re-read it from the task string).
+            file_path = attachments[0] if attachments else None
+            if not file_path:
+                m = _re.search(r"File path:\s*(.+)", task)
+                if m:
+                    file_path = m.group(1).splitlines()[0].strip()
+
+            native = None
+            from app.services.laptop_control.laptop_native import LaptopNative
+            nat = LaptopNative.get()
+            if file_path:
+                pc = self._parse_chat_app_and_contact(task)
+                if pc:
+                    app, contact = pc
+                    log.info("deterministic_file_send_try", app=app, contact=contact, file=file_path)
+                    native = await asyncio.to_thread(nat.chat_send_file, app, contact, file_path, "")
+            else:
+                parsed = self._parse_chat_send(task)
+                if parsed:
+                    app, contact, message = parsed
+                    log.info("deterministic_send_try", app=app, contact=contact, msg=message[:40])
+                    native = await asyncio.to_thread(nat.chat_send, app, contact, message)
+
+            if native and native.get("ok"):
+                return {
+                    "reply": f"✅ {native.get('msg', f'{contact} ko bhej diya')}",
+                    "actions": [{
+                        "action": "chat_send_file" if file_path else "chat_send",
+                        "status": "success", "message": native.get("msg", ""),
+                    }],
+                }
+            if native:
                 log.info("deterministic_send_fallback",
                          reason=(native.get("error") or native.get("msg", ""))[:120])
                 # fall through to the engine (it can open the app, handle odd UIs)

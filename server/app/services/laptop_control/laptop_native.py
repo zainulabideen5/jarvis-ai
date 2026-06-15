@@ -619,66 +619,104 @@ class LaptopNative:
     # Per-app UI labels — these are the APP's OWN universal labels (same on
     # every install), NOT user-specific. The contact name + message are always
     # passed in as parameters, so this works for ANY name on ANY user's laptop.
+    # GENERIC labels that fit MOST chat apps' English UI — these are appended
+    # to every app's config so the deterministic path works for ANY app
+    # (Slack, Discord, Telegram, …), not just the ones with explicit hints.
+    _GENERIC_SEARCH = ["Search", "Search input textbox", "Search or start a new chat",
+                       "Search box", "Find", "Jump to"]
+    _GENERIC_COMPOSE = ["Type a message", "Type a new message", "Message", "Write a message",
+                        "Start a new conversation", "Type something", "Compose", "Message input"]
+    _GENERIC_ATTACH = ["Attach files", "Attach", "Attach file", "Attachment", "Add file", "Upload"]
+    _GENERIC_UPLOAD = ["Upload from this device", "Upload from my computer", "Browse this device",
+                       "Choose file", "From computer"]
+    _GENERIC_SEND = ["Send (Ctrl+Enter)", "Send", "Send message"]
+
+    # Explicit HINTS for apps we've verified — only the bits that differ from
+    # the generic defaults. Any app NOT listed here still works via generics.
     _CHAT_APP_UI = {
         "whatsapp": {
             "window": "WhatsApp",
-            "search": ["Search input textbox", "Search or start a new chat", "Search"],
-            "compose": ["Type a message"],
+            # WhatsApp Desktop accepts a clipboard-pasted file (CF_HDROP) right
+            # into the compose box → preview → Enter. No attach-menu needed.
+            "file_via": "paste",
         },
         "teams": {
             "window": "Teams",
-            "search": ["Search", "Search box"],
-            "compose": ["Type a message", "Type a new message", "Start a new conversation"],
+            # Teams' WebView ignores pasted files → must use the attach button.
+            "file_via": "dialog",
         },
     }
 
-    def chat_send(self, app: str, contact: str, message: str) -> dict:
-        """DETERMINISTIC chat-app send — pure Python, NO LLM loop, NO ui_tree
-        scans (which hang). One fixed reliable sequence that works for ANY
-        contact on ANY laptop:
+    # how to title-case common app names for window matching (fallback: .title())
+    _APP_WINDOW = {"whatsapp": "WhatsApp", "teams": "Teams", "slack": "Slack",
+                   "discord": "Discord", "telegram": "Telegram", "signal": "Signal",
+                   "messenger": "Messenger", "skype": "Skype"}
 
-            focus window -> focus SEARCH -> paste name -> Enter (open chat)
-            -> focus COMPOSE (the step that was missing — WebView needs UIA
-               SetFocus or keystrokes go nowhere) -> paste message -> Enter
-            -> verify the compose box CLEARED (= the message left).
+    def _resolve_chat_cfg(self, app: str) -> dict:
+        """Build a send-config for ANY app: known hints (if any) + generic
+        label fallbacks. Unknown apps get a fully generic config so the
+        deterministic path is universal, not locked to a hardcoded list."""
+        key = (app or "").strip().lower()
+        cfg = dict(self._CHAT_APP_UI.get(key, {}))
+        cfg.setdefault("window", self._APP_WINDOW.get(key, key.title()))
+        cfg.setdefault("file_via", "dialog")   # safest default; whatsapp overrides to paste
+        # append generics (de-duped) so detection works on any UI
+        def _merge(field, generics):
+            cur = list(cfg.get(field, []))
+            return cur + [g for g in generics if g not in cur]
+        cfg["search"] = _merge("search", self._GENERIC_SEARCH)
+        cfg["compose"] = _merge("compose", self._GENERIC_COMPOSE)
+        cfg["attach_btn"] = _merge("attach_btn", self._GENERIC_ATTACH)
+        cfg["upload_item"] = _merge("upload_item", self._GENERIC_UPLOAD)
+        cfg["send_btn"] = _merge("send_btn", self._GENERIC_SEND)
+        return cfg
 
-        Honest: returns ok=False with a clear reason if any step can't be
-        confirmed — never claims 'sent' on faith.
-        """
-        cfg = self._CHAT_APP_UI.get((app or "").strip().lower())
-        if not cfg:
-            return {"ok": False, "error": f"'{app}' ke liye deterministic send abhi nahi (engine try karega)"}
+    def _open_contact_chat(self, app: str, contact: str) -> dict:
+        """Shared opener: bring the app foreground, search the contact, open
+        the chat. Returns {ok, win, cfg, pag} or {ok: False, error}. Used by
+        both text-send and file-send so the flow stays identical. Works for
+        ANY chat app via _resolve_chat_cfg (generic label detection)."""
+        cfg = self._resolve_chat_cfg(app)
         win = cfg["window"]
         pag = _get_pyautogui()
-
-        # 1) bring the app foreground (must be, or keystrokes hit the wrong window)
         fv = self.focus_and_verify(win)
         if not fv.get("ok"):
             return {"ok": False, "error": f"{win} foreground nahi hui — khula hai? ({fv.get('error','')})"}
-
-        # 2) focus the SEARCH box (try the app's candidate labels)
         if not self._focus_any(win, cfg["search"], "Edit"):
             return {"ok": False, "error": f"{win} ka search box nahi mila"}
+        self.paste_text(contact, clear_first=True)   # clear_first → no name doubling
+        time.sleep(1.3)                                # let results populate
+        pag.press("enter")                             # open top result
+        time.sleep(1.1)                                # let the chat load
+        return {"ok": True, "win": win, "cfg": cfg, "pag": pag}
 
-        # 3) paste the contact name (clear_first → no 'NameName' doubling), open chat
-        self.paste_text(contact, clear_first=True)
-        time.sleep(1.3)            # let search results populate
-        pag.press("enter")        # open the top result
-        time.sleep(1.1)           # let the chat load
+    def chat_send(self, app: str, contact: str, message: str) -> dict:
+        """DETERMINISTIC chat-app TEXT send — pure Python, NO LLM loop, NO
+        ui_tree scans (which hang). Works for ANY contact on ANY laptop:
 
-        # 4) focus the COMPOSE box — THE critical step that was missing
+            open chat -> focus COMPOSE (the missing step — WebView needs UIA
+            SetFocus or keystrokes go nowhere) -> paste message -> Enter
+            -> verify the compose box CLEARED (= the message left).
+
+        Honest: ok=False with a clear reason if anything can't be confirmed.
+        """
+        opened = self._open_contact_chat(app, contact)
+        if not opened.get("ok"):
+            return opened
+        win, cfg, pag = opened["win"], opened["cfg"], opened["pag"]
+
+        # focus the COMPOSE box — critical for WebView keyboard focus
         if not self._focus_any(win, cfg["compose"], "Edit") and \
            not self._focus_any(win, cfg["compose"], ""):
             return {"ok": False,
                     "error": f"compose box nahi mila — '{contact}' ki chat shayad open nahi hui"}
 
-        # 5) paste the message + send
         self.paste_text(message, clear_first=False)
         time.sleep(0.4)
         pag.press("enter")
         time.sleep(0.9)
 
-        # 6) verify: the compose box should now be EMPTY (message left)
+        # verify: the compose box should now be EMPTY (message left)
         needle = message.strip().lower()
         for _ in range(3):
             val = self.get_element_value(win, cfg["compose"][0])
@@ -691,6 +729,69 @@ class LaptopNative:
         return {"ok": False, "verified": False,
                 "msg": f"'{message}' type to kiya par compose box clear nahi hua — ho sakta hai na gaya ho, zara khud dekh lein"}
 
+    def chat_send_file(self, app: str, contact: str, file_path: str, caption: str = "") -> dict:
+        """DETERMINISTIC chat-app FILE/DOCUMENT send. Per-app because WebViews
+        differ: WhatsApp accepts a clipboard-pasted file; Teams needs its
+        attach button → Open dialog. Works for ANY contact + ANY file.
+
+        Honest: file-send is the hardest to VERIFY (no compose-clear signal),
+        so we best-effort confirm the filename shows in the chat and say so
+        plainly if we can't.
+        """
+        import os
+        p = os.path.abspath(os.path.expandvars(os.path.expanduser((file_path or "").strip().strip('"'))))
+        if not os.path.isfile(p):
+            return {"ok": False, "error": f"file nahi mili: {p}"}
+        base = os.path.basename(p)
+
+        opened = self._open_contact_chat(app, contact)
+        if not opened.get("ok"):
+            return opened
+        win, cfg, pag = opened["win"], opened["cfg"], opened["pag"]
+
+        if cfg.get("file_via") == "paste":
+            # WhatsApp: focus compose, paste the file (CF_HDROP) → preview
+            self._focus_any(win, cfg["compose"], "Edit") or self._focus_any(win, cfg["compose"], "")
+            r = self.attach_file(win, cfg["compose"][0], p)
+            if not r.get("ok"):
+                return {"ok": False, "error": f"file paste nahi hui: {r.get('error','')}"}
+            time.sleep(1.8)                       # let the preview render
+            if caption:
+                self.paste_text(caption, clear_first=False)
+                time.sleep(0.3)
+            pag.press("enter")                    # send from the preview
+            time.sleep(1.8)
+        else:
+            # Teams (and similar): attach button → upload-from-device → dialog
+            if not self._invoke_any(win, cfg.get("attach_btn", []), "Button"):
+                return {"ok": False, "error": "attach button nahi mila"}
+            time.sleep(0.9)
+            for nm in cfg.get("upload_item", []):  # the menu item (if a menu opens)
+                if self.uia_invoke(win, nm, "MenuItem").get("ok") or \
+                   self.uia_invoke(win, nm, "Button").get("ok"):
+                    break
+            time.sleep(1.2)
+            picked = self._pick_open_dialog(p)     # fill "File name" + click Open
+            if not picked.get("ok"):
+                return {"ok": False, "error": f"Open dialog handle nahi hua: {picked.get('error','')}"}
+            time.sleep(2.2)                        # let it upload
+            if caption:
+                self._focus_any(win, cfg["compose"], "Edit")
+                self.paste_text(caption, clear_first=False)
+                time.sleep(0.3)
+            if not self._invoke_any(win, cfg.get("send_btn", []), "Button"):
+                pag.hotkey("ctrl", "enter")        # fallback send
+            time.sleep(1.8)
+
+        # best-effort verify: does the filename now show in the chat window?
+        seen = self._text_in_window(win, base)
+        if seen:
+            return {"ok": True, "verified": True,
+                    "msg": f"'{base}' {contact} ko bhej diya (chat mein file nazar aa rahi hai)"}
+        return {"ok": False, "verified": False,
+                "msg": (f"'{base}' attach/send to kiya par pakka confirm nahi kar paya "
+                        f"ke chat mein chali gayi — zara khud dekh lein.")}
+
     def _focus_any(self, window_title: str, names: list[str], control_type: str) -> bool:
         """Try focusing the first matching candidate label. Returns True on success."""
         for nm in names:
@@ -699,4 +800,52 @@ class LaptopNative:
                     return True
             except Exception:
                 continue
+        return False
+
+    def _invoke_any(self, window_title: str, names: list[str], control_type: str) -> bool:
+        """Try clicking the first matching candidate label. Returns True on success."""
+        for nm in names:
+            try:
+                if self.uia_invoke(window_title, nm, control_type).get("ok"):
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def _pick_open_dialog(self, file_path: str) -> dict:
+        """Fill a Windows 'Open' file dialog: set the path into 'File name' and
+        click Open. (Same logic the engine's pick_file_in_dialog uses.)"""
+        for dlg in ("Open", "Choose File to Upload", "Select"):
+            if self._find_window(dlg) is None:
+                continue
+            r = self.uia_type(dlg, "File name", file_path, control_type="Edit")
+            if not r.get("ok"):
+                r = self.uia_type(dlg, "", file_path, control_type="Edit")
+            self.uia_invoke(dlg, "Open", "Button")
+            time.sleep(0.6)
+            return {"ok": True, "dialog": dlg}
+        return {"ok": False, "error": "Open dialog nahi mila"}
+
+    def _text_in_window(self, window_title: str, needle: str, timeout: float = 6.0) -> bool:
+        """Bounded scan: is `needle` text present anywhere in the window? Used
+        for best-effort file-send verification. Time-boxed so a huge WebView
+        tree can't hang us."""
+        needle = (needle or "").lower()
+        if not needle:
+            return False
+        deadline = time.monotonic() + timeout
+        try:
+            window = self._find_window(window_title)
+            if window is None:
+                return False
+            for e in window.descendants():
+                if time.monotonic() > deadline:
+                    break
+                try:
+                    if needle in (e.window_text() or "").lower():
+                        return True
+                except Exception:
+                    continue
+        except Exception:
+            pass
         return False
