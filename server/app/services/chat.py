@@ -1298,6 +1298,43 @@ class ChatService:
         msg = (action.get("message") or action.get("body") or action.get("text") or "").strip()
         return f"{platform} pe '{to}' ko yeh message bhejo: {msg}"
 
+    def _parse_chat_send(self, task: str) -> tuple[str, str, str] | None:
+        """Parse a clean single-message chat-app send into (app, contact,
+        message) for the FAST deterministic native path. Handles both word
+        orders:
+            'whatsapp pe <name> ko <msg> bhej'
+            '<name> ko whatsapp pe <msg> bhej'
+        Returns None if it's not a clean send (then the engine handles it).
+        Works for ANY name — nothing is hardcoded; name+msg come from here."""
+        import re as _re
+        if not task:
+            return None
+        low = task.lower()
+        if _re.search(r"\bwhats?\s*app\b|\bwa\b", low):
+            app = "whatsapp"
+        elif _re.search(r"\bteams?\b", low):
+            app = "teams"
+        else:
+            return None
+        idx = low.find(" ko ")
+        if idx == -1:
+            return None
+        before, after = task[:idx], task[idx + 4:]
+        # contact = the 'before' part minus the app name + 'pe/par' preposition
+        contact = _re.sub(r"(?i)\b(whats?\s*app|wa|teams?|pe|pa|par|pr|mein|me)\b", " ", before)
+        contact = contact.strip(" ,.'\"")
+        # message = the 'after' part; strip a leading 'whatsapp pe' (other order),
+        # surrounding quotes, and any trailing send verb
+        after = _re.sub(r"(?i)^\s*(whats?\s*app|wa|teams?)\s+(pe|pa|par|pr)?\s*", "", after)
+        msg = after.strip().strip("'\"").strip()
+        msg = _re.sub(
+            r"(?i)\s+(bhej\s*do|bhej\s*de|bhejo|bhej|bhaj\s*do|bhaj|send\s*kar\s*do|"
+            r"send|kar\s*do|kr\s*do|kardo|likh\s*do|likho|de\s*do|do)\s*$",
+            "", msg).strip().strip("'\"").strip()
+        if not contact or not msg or len(contact) > 40:
+            return None
+        return (app, contact, msg)
+
     async def _run_engine_task(
         self,
         task: str,
@@ -1335,6 +1372,32 @@ class ChatService:
                 "actions": [],
                 "pending": [{"token": token, "action": pending}],
             }
+
+        # ── FAST DETERMINISTIC PATH (chat-app text sends) ──
+        # Pure Python: focus → paste name → Enter → FOCUS compose → paste msg
+        # → Enter → verify compose cleared. No slow LLM loop, no hanging
+        # ui_tree. Only for clean single-message sends with no attachment;
+        # anything it can't parse or can't confirm falls through to the engine.
+        if not resume_transcript and not attachments:
+            parsed = self._parse_chat_send(task)
+            if parsed:
+                app, contact, message = parsed
+                from app.services.laptop_control.laptop_native import LaptopNative
+                log.info("deterministic_send_try", app=app, contact=contact, msg=message[:40])
+                native = await asyncio.to_thread(
+                    LaptopNative.get().chat_send, app, contact, message
+                )
+                if native.get("ok"):
+                    return {
+                        "reply": f"✅ {native.get('msg', f'{contact} ko bhej diya')}",
+                        "actions": [{
+                            "action": "chat_send", "status": "success",
+                            "message": native.get("msg", ""),
+                        }],
+                    }
+                log.info("deterministic_send_fallback",
+                         reason=(native.get("error") or native.get("msg", ""))[:120])
+                # fall through to the engine (it can open the app, handle odd UIs)
 
         from app.services.universal_engine.engine import UniversalEngine
         result = await UniversalEngine.get().run(task, transcript=resume_transcript)

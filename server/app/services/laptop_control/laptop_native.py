@@ -615,3 +615,88 @@ class LaptopNative:
                 return r
             time.sleep(0.5)
         return {"ok": False, "error": f"Window '{expected_title_substring}' nahi aayi {timeout}s mein"}
+
+    # Per-app UI labels — these are the APP's OWN universal labels (same on
+    # every install), NOT user-specific. The contact name + message are always
+    # passed in as parameters, so this works for ANY name on ANY user's laptop.
+    _CHAT_APP_UI = {
+        "whatsapp": {
+            "window": "WhatsApp",
+            "search": ["Search input textbox", "Search or start a new chat", "Search"],
+            "compose": ["Type a message"],
+        },
+        "teams": {
+            "window": "Teams",
+            "search": ["Search", "Search box"],
+            "compose": ["Type a message", "Type a new message", "Start a new conversation"],
+        },
+    }
+
+    def chat_send(self, app: str, contact: str, message: str) -> dict:
+        """DETERMINISTIC chat-app send — pure Python, NO LLM loop, NO ui_tree
+        scans (which hang). One fixed reliable sequence that works for ANY
+        contact on ANY laptop:
+
+            focus window -> focus SEARCH -> paste name -> Enter (open chat)
+            -> focus COMPOSE (the step that was missing — WebView needs UIA
+               SetFocus or keystrokes go nowhere) -> paste message -> Enter
+            -> verify the compose box CLEARED (= the message left).
+
+        Honest: returns ok=False with a clear reason if any step can't be
+        confirmed — never claims 'sent' on faith.
+        """
+        cfg = self._CHAT_APP_UI.get((app or "").strip().lower())
+        if not cfg:
+            return {"ok": False, "error": f"'{app}' ke liye deterministic send abhi nahi (engine try karega)"}
+        win = cfg["window"]
+        pag = _get_pyautogui()
+
+        # 1) bring the app foreground (must be, or keystrokes hit the wrong window)
+        fv = self.focus_and_verify(win)
+        if not fv.get("ok"):
+            return {"ok": False, "error": f"{win} foreground nahi hui — khula hai? ({fv.get('error','')})"}
+
+        # 2) focus the SEARCH box (try the app's candidate labels)
+        if not self._focus_any(win, cfg["search"], "Edit"):
+            return {"ok": False, "error": f"{win} ka search box nahi mila"}
+
+        # 3) paste the contact name (clear_first → no 'NameName' doubling), open chat
+        self.paste_text(contact, clear_first=True)
+        time.sleep(1.3)            # let search results populate
+        pag.press("enter")        # open the top result
+        time.sleep(1.1)           # let the chat load
+
+        # 4) focus the COMPOSE box — THE critical step that was missing
+        if not self._focus_any(win, cfg["compose"], "Edit") and \
+           not self._focus_any(win, cfg["compose"], ""):
+            return {"ok": False,
+                    "error": f"compose box nahi mila — '{contact}' ki chat shayad open nahi hui"}
+
+        # 5) paste the message + send
+        self.paste_text(message, clear_first=False)
+        time.sleep(0.4)
+        pag.press("enter")
+        time.sleep(0.9)
+
+        # 6) verify: the compose box should now be EMPTY (message left)
+        needle = message.strip().lower()
+        for _ in range(3):
+            val = self.get_element_value(win, cfg["compose"][0])
+            if val.get("ok"):
+                cur = (val.get("value") or "").strip().lower()
+                if needle not in cur:      # box cleared → it sent
+                    return {"ok": True, "verified": True,
+                            "msg": f"'{message}' {contact} ko bhej diya (compose box clear ho gaya = chala gaya)"}
+            time.sleep(0.5)
+        return {"ok": False, "verified": False,
+                "msg": f"'{message}' type to kiya par compose box clear nahi hua — ho sakta hai na gaya ho, zara khud dekh lein"}
+
+    def _focus_any(self, window_title: str, names: list[str], control_type: str) -> bool:
+        """Try focusing the first matching candidate label. Returns True on success."""
+        for nm in names:
+            try:
+                if self.focus_element(window_title, nm, control_type).get("ok"):
+                    return True
+            except Exception:
+                continue
+        return False
