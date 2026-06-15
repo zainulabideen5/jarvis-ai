@@ -343,15 +343,36 @@ class LaptopNative:
             return ""
 
     def minimize_window(self, title_substring: str) -> dict:
+        # 1) pygetwindow (Win32) — works for most apps
         try:
             import pygetwindow as gw
             for w in gw.getAllWindows():
                 if title_substring.lower() in (w.title or "").lower() and w.title:
                     try:
                         w.minimize()
-                        return {"ok": True, "title": w.title}
-                    except Exception as e:
-                        return {"ok": False, "error": str(e)[:120]}
+                        return {"ok": True, "title": w.title, "via": "gw"}
+                    except Exception:
+                        break   # fall through to win32 fallback
+        except Exception:
+            pass
+        # 2) win32 ShowWindow(SW_MINIMIZE) — more reliable for UWP/Electron
+        #    apps (WhatsApp/Teams) where pygetwindow.minimize() silently no-ops
+        try:
+            import win32con
+            import win32gui
+            found = {"hwnd": 0}
+
+            def _cb(hwnd, _):
+                if not win32gui.IsWindowVisible(hwnd):
+                    return
+                t = win32gui.GetWindowText(hwnd) or ""
+                if title_substring.lower() in t.lower():
+                    found["hwnd"] = hwnd
+
+            win32gui.EnumWindows(_cb, None)
+            if found["hwnd"]:
+                win32gui.ShowWindow(found["hwnd"], win32con.SW_MINIMIZE)
+                return {"ok": True, "title": title_substring, "via": "win32"}
             return {"ok": False, "error": "Window not found"}
         except Exception as e:
             return {"ok": False, "error": str(e)[:200]}
@@ -681,14 +702,34 @@ class LaptopNative:
         pag = _get_pyautogui()
         fv = self.focus_and_verify(win)
         if not fv.get("ok"):
-            return {"ok": False, "error": f"{win} foreground nahi hui — khula hai? ({fv.get('error','')})"}
+            # App band/closed hai → khud kholo (Start menu se, human-tarah —
+            # kisi bhi app ke liye). Warna deterministic fail ho ke SLOW engine
+            # pe gir jata tha ("whatsapp on hota hai, bot late" wali shikayat).
+            self._open_app_via_start(win)
+            fv = self.focus_and_verify(win)
+            if not fv.get("ok"):
+                return {"ok": False, "error": f"{win} khol/foreground nahi kar paya ({fv.get('error','')})"}
         if not self._focus_any(win, cfg["search"], "Edit"):
             return {"ok": False, "error": f"{win} ka search box nahi mila"}
         self.paste_text(contact, clear_first=True)   # clear_first → no name doubling
-        time.sleep(1.3)                                # let results populate
+        time.sleep(0.9)                                # let results populate
         pag.press("enter")                             # open top result
-        time.sleep(1.1)                                # let the chat load
+        time.sleep(0.8)                                # let the chat load
         return {"ok": True, "win": win, "cfg": cfg, "pag": pag}
+
+    def _open_app_via_start(self, name: str) -> None:
+        """Open an app the human way: Win → type name → Enter. Generic for ANY
+        installed app (no per-app path). Used when the app isn't already open."""
+        pag = _get_pyautogui()
+        try:
+            pag.press("win")
+            time.sleep(0.8)
+            self.paste_text(name, clear_first=True)
+            time.sleep(0.9)
+            pag.press("enter")
+            time.sleep(2.3)   # let the app launch + window appear
+        except Exception as e:
+            log.warning("open_app_via_start_failed", app=name, err=str(e)[:120])
 
     def chat_send(self, app: str, contact: str, message: str) -> dict:
         """DETERMINISTIC chat-app TEXT send — pure Python, NO LLM loop, NO
@@ -755,12 +796,12 @@ class LaptopNative:
             r = self.attach_file(win, cfg["compose"][0], p)
             if not r.get("ok"):
                 return {"ok": False, "error": f"file paste nahi hui: {r.get('error','')}"}
-            time.sleep(1.8)                       # let the preview render
+            time.sleep(1.3)                       # let the preview render
             if caption:
                 self.paste_text(caption, clear_first=False)
                 time.sleep(0.3)
             pag.press("enter")                    # send from the preview
-            time.sleep(1.8)
+            time.sleep(1.2)
         else:
             # Teams (and similar): attach button → upload-from-device → dialog
             if not self._invoke_any(win, cfg.get("attach_btn", []), "Button"):
@@ -826,7 +867,7 @@ class LaptopNative:
             return {"ok": True, "dialog": dlg}
         return {"ok": False, "error": "Open dialog nahi mila"}
 
-    def _text_in_window(self, window_title: str, needle: str, timeout: float = 6.0) -> bool:
+    def _text_in_window(self, window_title: str, needle: str, timeout: float = 3.0) -> bool:
         """Bounded scan: is `needle` text present anywhere in the window? Used
         for best-effort file-send verification. Time-boxed so a huge WebView
         tree can't hang us."""
