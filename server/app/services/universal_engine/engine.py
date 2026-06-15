@@ -719,42 +719,32 @@ def _post_task_cleanup(steps: list[dict], origin: str | None) -> None:
     for any app, not just Teams."""
     import time as _t
     from app.services.laptop_control.laptop_native import LaptopNative
-    from app.services.universal_engine.recipes import _detect_app
     nat = LaptopNative.get()
     origin_low = (origin or "").lower().strip()
 
-    # Collect windows to minimize: the ones the task used (from step args) PLUS
-    # any open chat-app window (Teams/WhatsApp/etc.) — so the chat reliably
-    # minimizes after a send even if a step's title didn't match exactly.
+    # FAST cleanup: the app just used IS the current foreground window — minimize
+    # THAT (win32, instant) + the task's step windows. We deliberately DROP the
+    # old UIA list_open_windows() scan here — it enumerated the whole desktop and
+    # was the main reason minimize felt "bohot late". (All-rounder: current
+    # foreground covers any app — chat/calc/browser/editor.)
     targets: list[str] = []
+    try:
+        cur = nat.active_window_title() or ""
+        if cur:
+            targets.append(cur)
+    except Exception:
+        pass
     for s in steps:
         w = (s.get("args") or {}).get("window_title")
         if w and w.lower() not in [x.lower() for x in targets]:
             targets.append(w)
-    try:
-        for win in nat.list_open_windows().get("windows", []):
-            t = win.get("title", "")
-            if _detect_app(t) and t.lower() not in [x.lower() for x in targets]:
-                targets.append(t)
-    except Exception:
-        pass
 
-    # ALL-ROUNDER: also minimize whatever app is currently in FRONT — any app
-    # (calculator, browser, editor…), not just chat apps. Zain wants EVERY app
-    # to minimize + return to the dashboard after ANY task.
-    try:
-        cur = nat.active_window_title() or ""
-        if cur and cur.lower() not in [x.lower() for x in targets]:
-            targets.append(cur)
-    except Exception:
-        pass
-
-    _t.sleep(0.5)  # let the send settle before we hide the window
+    _t.sleep(0.2)  # let the send settle a moment before hiding the window
     for w in targets:
         if origin_low and (w.lower() in origin_low or origin_low in w.lower()):
             continue  # never minimize the user's own window (dashboard)
         try:
-            nat.minimize_window(w)
+            nat.minimize_window(w)   # win32 SW_MINIMIZE fallback = fast on UWP
         except Exception:
             pass
     # Return focus to where the user was (dashboard)
