@@ -1589,20 +1589,27 @@ class ChatService:
                     log.info("deterministic_send_try", app=app, contact=contact, msg=message[:40])
                     native = await asyncio.to_thread(nat.chat_send, app, contact, message)
 
-            if native and native.get("ok"):
-                # minimize the app + return to the dashboard (every path)
+            if native is not None:
+                # Deterministic chat-send is AUTHORITATIVE — it already opened
+                # the chat and typed/sent. NEVER fall to the engine here: the
+                # engine would re-search + re-type = DUPLICATE messages (the
+                # "baar baar search/message" loop + stall the user saw — multiple
+                # salam/hello went out that way). Report the real result instead.
                 await asyncio.to_thread(self._post_send_cleanup, origin)
+                if native.get("ok"):
+                    return {
+                        "reply": f"✅ {native.get('msg', f'{contact} ko bhej diya')}",
+                        "actions": [{
+                            "action": "chat_send_file" if file_path else "chat_send",
+                            "status": "success", "message": native.get("msg", ""),
+                        }],
+                    }
+                reason = native.get("msg") or native.get("error") or "nahi ho saka"
                 return {
-                    "reply": f"✅ {native.get('msg', f'{contact} ko bhej diya')}",
-                    "actions": [{
-                        "action": "chat_send_file" if file_path else "chat_send",
-                        "status": "success", "message": native.get("msg", ""),
-                    }],
+                    "reply": (f"⚠️ Boss, {reason}. (Dobara bhejne se rok diya taake "
+                              "duplicate message na jaye — zara khud dekh lein.)"),
+                    "actions": [{"action": "chat_send", "status": "failed", "message": reason}],
                 }
-            if native:
-                log.info("deterministic_send_fallback",
-                         reason=(native.get("error") or native.get("msg", ""))[:120])
-                # fall through to the engine (it can open the app, handle odd UIs)
 
         from app.services.universal_engine.engine import UniversalEngine
         result = await UniversalEngine.get().run(task, transcript=resume_transcript, origin=origin)

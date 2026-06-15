@@ -542,6 +542,21 @@ class LaptopNative:
                         return {"ok": True, "value": str(val), "name": element_name}
                 except Exception:
                     continue
+            # Fallback: time-boxed descendants scan (correctness without the
+            # full-tree slowness — so verify doesn't false-fail → no re-send).
+            needle = (element_name or "").lower()
+            deadline = time.monotonic() + 1.5
+            try:
+                for e in window.descendants(control_type="Edit"):
+                    if time.monotonic() > deadline:
+                        break
+                    try:
+                        if needle in (e.element_info.name or "").lower():
+                            return {"ok": True, "value": str(e.get_value() or ""), "name": element_name}
+                    except Exception:
+                        continue
+            except Exception:
+                pass
             return {"ok": False, "error": "compose box nahi mila"}
         except Exception as e:
             return {"ok": False, "error": str(e)[:200]}
