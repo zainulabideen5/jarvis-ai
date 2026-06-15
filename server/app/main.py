@@ -69,7 +69,11 @@ async def lifespan(app: FastAPI):
     async def background_loop():
         while True:
             try:
-                await notifier.check_and_notify()
+                # NOTE: notifier.check_and_notify() was injecting "🔔 N tasks
+                # pending" messages into the chat every 5 min — Zain found this
+                # cluttered the chat (pending tasks belong on the Tasks page,
+                # not spammed into every conversation). Disabled. The daily
+                # report still runs below.
                 if await reporter.should_generate():
                     await reporter.generate_report()
             except Exception as e:
