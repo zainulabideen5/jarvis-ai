@@ -494,6 +494,35 @@ class LaptopNative:
         except Exception as e:
             return {"ok": False, "error": str(e)[:200]}
 
+    def get_element_value(self, window_title: str, element_name: str = "Type a message") -> dict:
+        """Read the current text/value of an element (e.g. the chat compose box).
+        Used to verify a send: after Enter, the compose box CLEARS (the message
+        left) — reliable even for common words like 'hello'."""
+        try:
+            window = self._find_window(window_title)
+            if window is None:
+                return {"ok": False, "error": "window nahi mili"}
+            needle = (element_name or "").lower()
+            for e in window.descendants():
+                try:
+                    info = e.element_info
+                    if (info.control_type or "") not in ("Edit", "Document"):
+                        continue
+                    nm = (info.name or "")
+                    if needle and needle not in nm.lower():
+                        continue
+                    val = ""
+                    try:
+                        val = e.get_value() or ""
+                    except Exception:
+                        val = ""
+                    return {"ok": True, "value": str(val), "name": nm}
+                except Exception:
+                    continue
+            return {"ok": False, "error": "compose box nahi mila"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200]}
+
     def focus_element(self, window_title: str, element_name: str, control_type: str = "") -> dict:
         """Give KEYBOARD focus to a specific control via UIA SetFocus.
 

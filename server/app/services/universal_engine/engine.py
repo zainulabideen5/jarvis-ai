@@ -316,7 +316,7 @@ class UniversalEngine:
         # Verify the send actually landed before claiming success.
         if typed:
             present = await self._bounded(
-                _verify_present, typed["window"], typed["text"], typed.get("before"),
+                _verify_present, typed["window"], typed["text"], typed.get("before"), typed.get("is_file", False),
                 timeout=20, default=False)
             if not present:
                 return None  # couldn't confirm via replay → let normal mode try
@@ -385,7 +385,7 @@ class UniversalEngine:
 
         if typed:
             present = await self._bounded(
-                _verify_present, typed["window"], typed["text"], typed.get("before"),
+                _verify_present, typed["window"], typed["text"], typed.get("before"), typed.get("is_file", False),
                 timeout=20, default=False)
             if not present:
                 return None  # not confirmed — let the interactive loop retry properly
@@ -518,7 +518,7 @@ class UniversalEngine:
                 # silently failed (e.g. focus didn't land on a WebView box).
                 if typed and _claims_success(reply):
                     present = await self._bounded(
-                        _verify_present, typed["window"], typed["text"], typed.get("before"),
+                        _verify_present, typed["window"], typed["text"], typed.get("before"), typed.get("is_file", False),
                         timeout=20, default=False)
                     if not present:
                         log.warning("engine_unverified_send", window=typed["window"])
@@ -652,7 +652,7 @@ class UniversalEngine:
         # in the window, the send DID succeed — don't report a false failure.
         if typed:
             present = await self._bounded(
-                _verify_present, typed["window"], typed["text"], typed.get("before"),
+                _verify_present, typed["window"], typed["text"], typed.get("before"), typed.get("is_file", False),
                 timeout=20, default=False)
             if present:
                 return {
@@ -868,15 +868,31 @@ def _count_text_in_window(window_title: str, text: str) -> int:
     return total
 
 
-def _verify_present(window_title: str, text: str, before: int | None = None) -> bool:
-    """Confirm the send actually happened. If we know how many times the text
-    appeared BEFORE sending, require the count to have INCREASED (a new message
-    appeared) — this defeats false-positives from old identical messages like
-    'hello'. If no baseline, fall back to plain presence."""
+def _verify_present(window_title: str, text: str, before: int | None = None,
+                    is_file: bool = False) -> bool:
+    """Confirm a send actually happened.
+
+    For a TEXT message the MOST reliable signal is the COMPOSE BOX: after Enter,
+    a sent message leaves the box empty. If the box no longer holds the text →
+    it sent (works even for common words like 'hello' where counting old copies
+    is unreliable). If the box STILL holds the text → not sent.
+    For files / when the box can't be read, fall back to count-increase, then
+    plain presence."""
+    if not is_file and window_title:
+        try:
+            from app.services.laptop_control.laptop_native import LaptopNative
+            box = LaptopNative.get().get_element_value(window_title)
+            if box.get("ok"):
+                needle = text.strip()[:30].lower()
+                box_val = (box.get("value") or "").lower()
+                # box cleared (message gone) → sent; still there → not sent
+                return bool(needle) and needle not in box_val
+        except Exception:
+            pass
+    # Count-increase (good for files / unique text)
     if before is not None:
-        now = _count_text_in_window(window_title, text)
-        return now > before
-    # No baseline — plain presence (best effort)
+        return _count_text_in_window(window_title, text) > before
+    # Last resort — plain presence anywhere in a chat-app window
     if window_title and _text_present_in_window(window_title, text):
         return True
     try:
