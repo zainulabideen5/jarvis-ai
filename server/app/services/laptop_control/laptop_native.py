@@ -527,21 +527,19 @@ class LaptopNative:
             window = self._find_window(window_title)
             if window is None:
                 return {"ok": False, "error": "window nahi mili"}
-            needle = (element_name or "").lower()
-            for e in window.descendants():
+            import re as _re
+            # TARGETED lookup (child_window) — NOT a full descendants() scan,
+            # which on WhatsApp's huge WebView tree took seconds (the slowness).
+            for ct in ("Edit", "Document"):
                 try:
-                    info = e.element_info
-                    if (info.control_type or "") not in ("Edit", "Document"):
-                        continue
-                    nm = (info.name or "")
-                    if needle and needle not in nm.lower():
-                        continue
-                    val = ""
-                    try:
-                        val = e.get_value() or ""
-                    except Exception:
-                        val = ""
-                    return {"ok": True, "value": str(val), "name": nm}
+                    cand = window.child_window(
+                        title_re=f".*{_re.escape(element_name)}.*", control_type=ct)
+                    if cand.exists(timeout=0.5):
+                        try:
+                            val = cand.get_value() or ""
+                        except Exception:
+                            val = ""
+                        return {"ok": True, "value": str(val), "name": element_name}
                 except Exception:
                     continue
             return {"ok": False, "error": "compose box nahi mila"}
@@ -560,11 +558,13 @@ class LaptopNative:
             if window is None:
                 return {"ok": False, "error": f"window '{window_title}' nahi mili"}
             target = None
-            # FAST PATH: direct child_window match (no full-tree scan)
+            # FAST PATH: direct child_window match (no full-tree scan). Short
+            # timeout — on WhatsApp's big tree, a 1s wait PER non-matching
+            # candidate added up; 0.4s keeps _focus_any snappy.
             try:
                 import re as _re
                 cand = window.child_window(title_re=f".*{_re.escape(element_name)}.*")
-                if cand.exists(timeout=1):
+                if cand.exists(timeout=0.4):
                     target = cand
             except Exception:
                 target = None
