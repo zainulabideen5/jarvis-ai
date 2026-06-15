@@ -300,8 +300,13 @@ class VisionController:
 
     def run(self, task: str, max_steps: int = 9) -> dict:
         """See→act loop. Returns {ok, reply, steps}."""
+        from app.services.task_control import clear_stop, is_stopped
+        clear_stop()   # fresh task → drop any stale stop flag
         history: list[str] = []
         for step in range(1, max_steps + 1):
+            if is_stopped():
+                log.info("vision_stopped_by_user", step=step)
+                return {"ok": False, "reply": "🛑 Boss, rok diya — aapne stop bola.", "steps": step}
             window = self._foreground_window()
             shot, offset = self._capture(window)
             marks = self._enumerate(window)

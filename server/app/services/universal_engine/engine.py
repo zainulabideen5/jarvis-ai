@@ -403,6 +403,10 @@ class UniversalEngine:
         """Run a task, then tidy up: minimize whatever app it used and return
         the user to where they were (e.g. the dashboard). Wrapper around the
         actual loop so cleanup runs no matter which path returns."""
+        # Fresh task → clear any stale STOP flag from a previous run.
+        if not transcript:
+            from app.services.task_control import clear_stop
+            clear_stop()
         # Remember where the user was BEFORE we start grabbing windows.
         origin = None
         if not transcript:
@@ -480,6 +484,12 @@ class UniversalEngine:
         typed: dict | None = None   # last text typed + its window (for verify)
 
         for step_no in range(1, max_steps + 1):
+            # STOP check — user can abort a running task ("ruk ja"/stop).
+            from app.services.task_control import is_stopped
+            if is_stopped():
+                log.info("engine_stopped_by_user", step=step_no)
+                _set_progress(False, "", step_no)
+                return {"ok": False, "reply": "🛑 Boss, rok diya — aapne stop bola.", "steps": steps}
             raw = None
             last_err: BrainError | None = None
             # Show "thinking" so the UI doesn't look frozen during the (slow,

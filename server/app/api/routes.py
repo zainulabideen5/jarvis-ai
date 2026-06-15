@@ -1465,3 +1465,12 @@ async def vision_do(body: VisionDo):
         )
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@router.post("/stop")
+async def stop_task():
+    """STOP the currently running task — it halts at its next step. Works even
+    while a task is mid-run (the loop runs in a worker thread)."""
+    from app.services.task_control import request_stop
+    request_stop()
+    return {"ok": True, "msg": "stop signal bhej diya — task agle step pe ruk jayega"}

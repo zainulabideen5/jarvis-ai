@@ -380,6 +380,15 @@ class ChatService:
         # Save user message to DB
         await self._save_message("user", user_message)
 
+        # STOP — let the user halt a running task at any time. Set the flag and
+        # return immediately; the running engine/vision loop bails next step.
+        if self._is_stop_command(user_message):
+            from app.services.task_control import request_stop
+            request_stop()
+            reply = "🛑 Boss, rok raha hoon — jo task chal raha tha woh agle step pe ruk jayega."
+            await self._save_message("assistant", reply, "[]")
+            return {"reply": reply, "actions": []}
+
         # If verification flow active, route through it (typed commands)
         verification_result = await self._try_verification(user_message)
         if verification_result is not None:
@@ -1334,6 +1343,15 @@ class ChatService:
     _VISION_CUES = ("dekh ke", "dekh kar", "dekhke", "dekh k ", "screen se",
                     "screen dekh", "vision se", "vision", "screenshot le",
                     "khud dekh ke", "screen pe dekh")
+
+    _STOP_WORDS = {
+        "stop", "ruk", "ruk ja", "ruko", "ruk jao", "ruk jao", "roko", "rok do",
+        "rok de", "band karo", "band kar", "band kr", "cancel karo", "abort",
+    }
+
+    @classmethod
+    def _is_stop_command(cls, message: str) -> bool:
+        return message.strip().lower().rstrip("!.") in cls._STOP_WORDS
 
     @classmethod
     def _is_vision_request(cls, message: str) -> bool:
