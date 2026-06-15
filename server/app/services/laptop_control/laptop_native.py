@@ -692,6 +692,12 @@ class LaptopNative:
         cfg["send_btn"] = _merge("send_btn", self._GENERIC_SEND)
         return cfg
 
+    def chat_file_method(self, app: str) -> str:
+        """How this app accepts a file: 'paste' (WhatsApp — clipboard paste,
+        reliable) or 'dialog' (Teams etc. — attach button + Open dialog, which
+        is fragile via UIA, so the caller routes those to vision instead)."""
+        return self._resolve_chat_cfg(app).get("file_via", "dialog")
+
     def _open_contact_chat(self, app: str, contact: str) -> dict:
         """Shared opener: bring the app foreground, search the contact, open
         the chat. Returns {ok, win, cfg, pag} or {ok: False, error}. Used by

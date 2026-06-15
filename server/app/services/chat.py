@@ -1365,24 +1365,11 @@ class ChatService:
 
     def _post_send_cleanup(self, origin: str | None) -> None:
         """After ANY app-control task: minimize the app we used + bring the
-        user's window (dashboard) back to front. Zain wants this on EVERY path
-        (vision, deterministic chat-send, engine) — not just some. Generic:
-        works for any app, not only chat apps. Runs in a thread (blocking)."""
-        import time as _t
-        from app.services.laptop_control.laptop_native import LaptopNative
-        nat = LaptopNative.get()
-        origin_low = (origin or "").lower().strip()
-        _t.sleep(0.4)   # let the last action settle
-        # 1) minimize whatever app is now in front (the one we just used),
-        #    unless that's the user's own window (dashboard)
-        try:
-            cur = nat.active_window_title() or ""
-            if cur and (not origin_low or (cur.lower() not in origin_low and origin_low not in cur.lower())):
-                nat.minimize_window(cur)
-        except Exception:
-            pass
-        # 2) also minimize any open chat-app window + refocus origin (reuses the
-        #    engine's generic cleanup — covers Teams/WhatsApp left open)
+        dashboard back. Delegates to the engine's SINGLE-PASS cleanup (which
+        minimizes the current foreground app + chat windows, then refocuses
+        origin). Calling it exactly ONCE is important — the earlier version
+        minimized the app AND then ran the engine cleanup, which re-read the
+        foreground (now the dashboard) and minimized the dashboard too."""
         try:
             from app.services.universal_engine.engine import _post_task_cleanup
             _post_task_cleanup([], origin)
@@ -1528,8 +1515,15 @@ class ChatService:
                 pc = self._parse_chat_app_and_contact(task)
                 if pc:
                     app, contact = pc
-                    log.info("deterministic_file_send_try", app=app, contact=contact, file=file_path)
-                    native = await asyncio.to_thread(nat.chat_send_file, app, contact, file_path, "")
+                    if nat.chat_file_method(app) == "paste":
+                        # WhatsApp etc. — reliable clipboard-paste file send
+                        log.info("deterministic_file_send_try", app=app, contact=contact, file=file_path)
+                        native = await asyncio.to_thread(nat.chat_send_file, app, contact, file_path, "")
+                    else:
+                        # Teams etc. — attach button/dialog is fragile via UIA;
+                        # use VISION (sees the attach button + Send) directly.
+                        log.info("dialog_file_send_via_vision", app=app, contact=contact)
+                        native = await asyncio.to_thread(self._run_vision, task)
             else:
                 parsed = self._parse_chat_send(task)
                 if parsed:
