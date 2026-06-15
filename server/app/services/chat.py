@@ -1492,6 +1492,18 @@ class ChatService:
                 "pending": [{"token": token, "action": pending}],
             }
 
+        # Capture the user's window (dashboard) NOW — BEFORE any deterministic
+        # path focuses an app — so cleanup (and the engine fallback) returns
+        # here, not to the app it opened. (Bug: engine captured origin AFTER the
+        # deterministic path focused Teams → it minimized the dashboard instead.)
+        origin = None
+        if not resume_transcript:
+            from app.services.laptop_control.laptop_native import LaptopNative as _LN
+            try:
+                origin = await asyncio.to_thread(_LN.get().active_window_title)
+            except Exception:
+                origin = None
+
         # ── FAST DETERMINISTIC PATH (chat-app text + file sends) ──
         # Pure Python: focus → paste name → Enter → FOCUS compose → paste/attach
         # → Enter → verify. No slow LLM loop, no hanging ui_tree. Handles a
@@ -1510,7 +1522,6 @@ class ChatService:
             native = None
             from app.services.laptop_control.laptop_native import LaptopNative
             nat = LaptopNative.get()
-            origin = await asyncio.to_thread(nat.active_window_title)  # dashboard
             if file_path:
                 pc = self._parse_chat_app_and_contact(task)
                 if pc:
@@ -1543,7 +1554,7 @@ class ChatService:
                 # fall through to the engine (it can open the app, handle odd UIs)
 
         from app.services.universal_engine.engine import UniversalEngine
-        result = await UniversalEngine.get().run(task, transcript=resume_transcript)
+        result = await UniversalEngine.get().run(task, transcript=resume_transcript, origin=origin)
 
         # Engine needs more info — park the session and ask the user.
         if result.get("needs_input"):

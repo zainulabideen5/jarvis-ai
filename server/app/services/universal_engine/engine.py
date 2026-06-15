@@ -399,17 +399,23 @@ class UniversalEngine:
         task: str,
         max_steps: int = MAX_STEPS,
         transcript: list[dict] | None = None,
+        origin: str | None = None,
     ) -> dict:
         """Run a task, then tidy up: minimize whatever app it used and return
         the user to where they were (e.g. the dashboard). Wrapper around the
-        actual loop so cleanup runs no matter which path returns."""
+        actual loop so cleanup runs no matter which path returns.
+
+        origin: the user's window (dashboard) to return to. Pass it in when the
+        caller already changed the foreground (e.g. a deterministic path focused
+        an app first) — otherwise we'd capture the WRONG window here and end up
+        minimizing the dashboard instead of the app."""
         # Fresh task → clear any stale STOP flag from a previous run.
         if not transcript:
             from app.services.task_control import clear_stop
             clear_stop()
-        # Remember where the user was BEFORE we start grabbing windows.
-        origin = None
-        if not transcript:
+        # Remember where the user was BEFORE we start grabbing windows — unless
+        # the caller already told us (more reliable).
+        if origin is None and not transcript:
             try:
                 origin = await asyncio.to_thread(
                     LaptopNative_active_title
@@ -456,7 +462,11 @@ class UniversalEngine:
         if not transcript:
             from app.services.universal_engine.recipes import RecipeStore, intent_key
             intent = intent_key(task)
-            if intent:
+            # NEVER replay a FILE send: the generic "attachment" verify is
+            # unreliable (it matches stray 'attachment' text in the tree → false
+            # "bhej diya" even when the file never attached). File sends always
+            # run the real flow with real verification. (intent kept for learning.)
+            if intent and not intent.startswith("sendfile:"):
                 recipe = RecipeStore.get(intent)
                 if recipe:
                     _set_progress(True, "Yaad kiya hua tareeqa chala raha hun…", 0)
