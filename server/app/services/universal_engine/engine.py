@@ -450,15 +450,12 @@ class UniversalEngine:
                     if replayed is not None:
                         return replayed
                     log.info("replay_fell_back_to_normal", intent=intent)
-                elif intent.startswith(("send:", "sendfile:")):
-                    # New chat-app send with no recipe yet: plan it in ONE brain
-                    # call and execute (instead of 6-8 slow think rounds). Falls
-                    # back to the interactive loop if the plan doesn't fit.
-                    _set_progress(True, "Plan bana raha hun…", 0)
-                    planned = await self._try_direct_plan(task, intent)
-                    if planned is not None:
-                        return planned
-                    log.info("direct_plan_fell_back_to_normal", intent=intent)
+                # NOTE: direct-plan (blind one-shot) is intentionally NOT used for
+                # sends — it can't confirm the right chat opened, risking a
+                # wrong-recipient message. New sends go through the interactive
+                # loop (opens contact via search, CONFIRMS the header, then
+                # sends + count-verifies) — slower on CLI but RELIABLE — and the
+                # learned recipe makes every repeat fast.
 
         if transcript:
             # Resuming after a clarifying question — the user's reply is the answer.
@@ -742,16 +739,18 @@ def _scrub_recipe_step(tool: str, args: dict) -> dict:
 
 
 def _is_sane_send_recipe(clean: list[dict]) -> bool:
-    """A messaging recipe is only safe if it SELECTS a recipient before typing.
-    Without a click_element (contact pick) before the first type/send, replay
-    would dump the message into whatever chat is open → wrong person. Generic
-    check — no app/name specifics."""
-    send_tools = ("type_in_window", "set_text", "pick_file_in_dialog")
-    first_send = next((i for i, s in enumerate(clean) if s["tool"] in send_tools), None)
-    if first_send is None:
+    """A messaging/file recipe is only safe if it NAVIGATES to a recipient
+    before sending — otherwise replay dumps the message into whatever chat is
+    open (wrong person). Navigation = either click_element (clicked the contact
+    in the list) OR press_keys (opened the searched contact via Enter). Generic
+    — no app/name specifics. The bad recipe that caused the wrong-send had
+    neither (it just typed)."""
+    msg_tools = ("type_in_window", "set_text", "pick_file_in_dialog", "attach_file")
+    has_msg = any(s["tool"] in msg_tools for s in clean)
+    if not has_msg:
         return True  # not a send recipe (e.g. open app) — fine
-    # must click something (the contact) before the first send
-    return any(s["tool"] == "click_element" for s in clean[:first_send])
+    # Some recipient navigation must be present.
+    return any(s["tool"] in ("click_element", "press_keys") for s in clean)
 
 
 def _dedupe_consecutive_sends(clean: list[dict]) -> list[dict]:
