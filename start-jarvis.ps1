@@ -70,6 +70,16 @@ function Start-Detached {
         [string]$WorkingDir,
         [string]$Label
     )
+    # Dashboard (vite) needs a real console window — Win32_Process.Create runs
+    # in a context where `start` can't create one, so vite dies. Start-Process
+    # uses the current window station, so `start "" /min cmd /k` works.
+    if ($Label -eq "Dashboard") {
+        Start-Process -FilePath "cmd.exe" `
+            -ArgumentList '/c', 'start "JARVIS Dashboard" /min cmd /k "d:\jarvis\dashboard\run-dashboard.bat"' `
+            -WorkingDirectory $WorkingDir | Out-Null
+        Write-Host "  Started $Label (via console window)"
+        return $true
+    }
     $params = @{
         CommandLine = $CommandLine
         CurrentDirectory = $WorkingDir
