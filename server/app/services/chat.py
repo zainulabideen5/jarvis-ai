@@ -1409,12 +1409,15 @@ class ChatService:
             return None
         before, after = task[:idx], task[idx + 4:]
         _APP = r"whats?\s*app|wa|teams?|slack|discord|telegram|tg|signal|messenger|skype"
-        # contact = the 'before' part minus the app name + 'pe/par' preposition
-        contact = _re.sub(rf"(?i)\b({_APP}|pe|pa|par|pr|mein|me)\b", " ", before)
+        # Roman-Urdu prepositions for on/in — pe/pa/par/mein/me AND ma/mai/may/mn
+        # (Zain writes "whatsapp MA Zain ko" → 'ma' must be stripped or it becomes
+        # part of the contact: "ma Zain Ul" → contact not found).
+        _PREP = r"pe|pa|par|pr|mein|mei|me|ma|mai|may|mn|men|may"
+        contact = _re.sub(rf"(?i)\b({_APP}|{_PREP})\b", " ", before)
         contact = contact.strip(" ,.'\"")
-        # message = the 'after' part; strip a leading 'whatsapp pe' (other order),
+        # message = the 'after' part; strip a leading 'whatsapp pe/ma' (other order),
         # surrounding quotes, and any trailing send verb
-        after = _re.sub(rf"(?i)^\s*({_APP})\s+(pe|pa|par|pr)?\s*", "", after)
+        after = _re.sub(rf"(?i)^\s*({_APP})\s+({_PREP})?\s*", "", after)
         msg = after.strip().strip("'\"").strip()
         msg = _re.sub(
             r"(?i)\s+(bhej\s*do|bhej\s*de|bhejo|bhej|bhaj\s*do|bhaj|send\s*kar\s*do|"
@@ -1439,7 +1442,8 @@ class ChatService:
             rec = self._extract_recipient_from_message(task)
             return (app, rec) if rec else None
         _APP = r"whats?\s*app|wa|teams?|slack|discord|telegram|tg|signal|messenger|skype"
-        contact = _re.sub(rf"(?i)\b({_APP}|pe|pa|par|pr|mein|me)\b", " ", task[:idx])
+        _PREP = r"pe|pa|par|pr|mein|mei|me|ma|mai|may|mn|men"
+        contact = _re.sub(rf"(?i)\b({_APP}|{_PREP})\b", " ", task[:idx])
         contact = contact.strip(" ,.'\"")
         if not contact or len(contact) > 40:
             return None

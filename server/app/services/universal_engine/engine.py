@@ -862,7 +862,8 @@ def _basename_if_path(s: str) -> str:
 
 _RECIPIENT_STOP = {
     "teams", "team", "whatsapp", "whats", "app", "slack", "discord", "telegram",
-    "pe", "pa", "par", "mein", "me", "ko", "se", "ka", "ki", "kar", "karo", "kr",
+    "pe", "pa", "par", "pr", "mein", "mei", "me", "ma", "mai", "may", "mn", "men",
+    "ko", "se", "ka", "ki", "kar", "karo", "kr",
     "send", "bhej", "bhejo", "bhaj", "message", "msg", "yeh", "ye", "ek",
 }
 
