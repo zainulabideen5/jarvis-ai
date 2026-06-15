@@ -111,9 +111,11 @@ $svcServer = @{
 $svcDashboard = @{
     Name = "Dashboard"
     Port = 3000
-    # Vite is slow to compile from cold cache. Use a longer timeout via a
-    # per-service `TimeoutSec` override so slower laptops don't false-fail.
-    CommandLine = 'cmd.exe /c "set PATH=C:\Program Files\nodejs;%PATH% && npm.cmd run dev"'
+    # Vite needs a LIVE console/stdin — fully-detached/hidden spawns make it
+    # exit instantly with no output. `start "" /min cmd /k <bat>` opens a
+    # minimized console that keeps stdin alive, so vite stays up. (Proven
+    # reliable; the silent Win32_Process.Create + redirect approach was not.)
+    CommandLine = 'cmd.exe /c start "JARVIS Dashboard" /min cmd /k "d:\jarvis\dashboard\run-dashboard.bat"'
     WorkingDir = 'd:\jarvis\dashboard'
     HealthCheck = { Test-PortListening 3000 }
     TimeoutSec = 90
