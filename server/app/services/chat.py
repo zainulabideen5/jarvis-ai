@@ -1291,7 +1291,15 @@ class ChatService:
             engine clarifying question. `task` is then the user's answer.
         """
         if attachments and not resume_transcript:
-            task = f"{task}\n(User ne yeh files attach ki hain: {', '.join(attachments)})"
+            files = ", ".join(attachments)
+            task = (
+                f"{task}\n\nYEH EK FILE/DOCUMENT BHEJNI HAI (text message NAHI). "
+                f"File path: {files}\n"
+                f"File ko attach_file tool se compose box mein ATTACH karo "
+                f"(file ka naam/path kabhi TYPE mat karo — woh galat hai). "
+                f"Steps: contact kholo → attach_file {{file_path yeh path}} → "
+                f"thoda ruko → Enter se bhejo → verify ke file chat mein nazar aaye."
+            )
 
         if needs_confirm and not resume_transcript:
             token = f"confirm_{secrets.token_urlsafe(16)}"

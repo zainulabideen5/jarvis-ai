@@ -668,23 +668,37 @@ def _post_task_cleanup(steps: list[dict], origin: str | None) -> None:
     """After a task: minimize the app windows the engine used, then bring the
     user back to where they were (e.g. the JARVIS dashboard). Generic — works
     for any app, not just Teams."""
+    import time as _t
     from app.services.laptop_control.laptop_native import LaptopNative
+    from app.services.universal_engine.recipes import _detect_app
     nat = LaptopNative.get()
     origin_low = (origin or "").lower().strip()
-    wins: list[str] = []
+
+    # Collect windows to minimize: the ones the task used (from step args) PLUS
+    # any open chat-app window (Teams/WhatsApp/etc.) — so the chat reliably
+    # minimizes after a send even if a step's title didn't match exactly.
+    targets: list[str] = []
     for s in steps:
         w = (s.get("args") or {}).get("window_title")
-        if w and w.lower() not in [x.lower() for x in wins]:
-            wins.append(w)
-    for w in wins:
-        # don't minimize the user's own origin window (e.g. the dashboard)
+        if w and w.lower() not in [x.lower() for x in targets]:
+            targets.append(w)
+    try:
+        for win in nat.list_open_windows().get("windows", []):
+            t = win.get("title", "")
+            if _detect_app(t) and t.lower() not in [x.lower() for x in targets]:
+                targets.append(t)
+    except Exception:
+        pass
+
+    _t.sleep(0.5)  # let the send settle before we hide the window
+    for w in targets:
         if origin_low and (w.lower() in origin_low or origin_low in w.lower()):
-            continue
+            continue  # never minimize the user's own window (dashboard)
         try:
             nat.minimize_window(w)
         except Exception:
             pass
-    # Return focus to where the user was
+    # Return focus to where the user was (dashboard)
     if origin_low:
         try:
             nat.focus_window(origin)
