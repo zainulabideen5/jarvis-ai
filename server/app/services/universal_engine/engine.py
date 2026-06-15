@@ -19,6 +19,12 @@ log = get_logger(__name__)
 
 MAX_STEPS = 15
 
+# A sent file shows up as an attachment in the chat with text like
+# "...has an attachment". A typed filename does NOT — so verifying this string
+# (and that its count INCREASED) is how we tell a real attachment from a model
+# that merely typed the file's name.
+_ATTACH_INDICATOR = "attachment"
+
 SYSTEM_PROMPT = f"""You are the planning core of a premium personal Windows assistant
 (JARVIS). The user talks casually in Roman Urdu / English mix — often short,
 informal, or with the real intent implied rather than spelled out. Your job is
@@ -278,23 +284,27 @@ class UniversalEngine:
             if tool_name not in TOOLS:
                 continue
             _set_progress(True, _TOOL_PROGRESS.get(tool_name, "Kaam kar raha hun…"), i)
-            # Count existing copies of the message BEFORE sending (so verify
-            # detects a NEW one, not an old identical "hello").
+            # Verify target: message text, or — for files — a real "attachment"
+            # indicator (a typed filename can't be told apart from an attachment
+            # by the filename alone). Count BEFORE so we detect a NEW one.
+            is_file_tool = tool_name in ("attach_file", "pick_file_in_dialog")
+            verify_needle = None
+            if tool_name in ("set_text", "type_in_window"):
+                verify_needle = _basename_if_path(str(args.get("text") or ""))
+            elif is_file_tool:
+                verify_needle = _ATTACH_INDICATOR
             pre_count = None
-            if tool_name in ("set_text", "type_in_window", "attach_file", "pick_file_in_dialog"):
-                _vtxt = _basename_if_path(str(args.get("file_path") or args.get("text") or ""))
-                if _vtxt:
-                    pre_count = await self._bounded(
-                        _count_text_in_window, str(args.get("window_title") or ""), _vtxt,
-                        timeout=15, default=None)
+            if verify_needle:
+                pre_count = await self._bounded(
+                    _count_text_in_window, str(args.get("window_title") or ""),
+                    verify_needle, timeout=15, default=None)
             result = await self._run_tool(tool_name, args)
             steps.append({"step": i, "tool": tool_name, "args": args, "ok": bool(result.get("ok"))})
-            if result.get("ok") and tool_name in ("set_text", "type_in_window", "attach_file", "pick_file_in_dialog"):
-                txt = str(args.get("text") or args.get("file_path") or "")
+            if result.get("ok") and verify_needle:
                 win = str(args.get("window_title") or "")
-                art = _basename_if_path(txt)
-                if art:
-                    typed = {"window": win if art == txt else "", "text": art, "before": pre_count}
+                scan = is_file_tool or (verify_needle != str(args.get("text") or ""))
+                typed = {"window": "" if scan else win, "text": verify_needle,
+                         "before": pre_count, "is_file": is_file_tool}
             # An action step failing means the recipe didn't fit → relearn.
             if not result.get("ok") and tool_name in (
                 "open_app", "click_element", "set_text", "type_in_window",
@@ -586,31 +596,32 @@ class UniversalEngine:
             # BEFORE a send, count how many times this text already appears in
             # the chat (old identical msgs like "hello"). After sending we need
             # to see a NEW occurrence — otherwise verify falsely matches an old one.
+            # What to verify after this step. For a TEXT message: the message
+            # text. For a FILE: an actual "attachment" indicator (NOT the
+            # filename — a typed filename also shows the name, so the filename
+            # can't tell a real attachment from text that just mentions it).
+            is_file_tool = tool_name in ("attach_file", "pick_file_in_dialog")
+            verify_needle = None
+            if tool_name in ("set_text", "type_in_window"):
+                _t = str(args.get("text") or "")
+                verify_needle = _basename_if_path(_t)
+            elif is_file_tool:
+                verify_needle = _ATTACH_INDICATOR   # "has an attachment"
             pre_count = None
-            if tool_name in ("set_text", "type_in_window", "attach_file", "pick_file_in_dialog"):
-                _vtxt = _basename_if_path(str(args.get("file_path") or args.get("text") or ""))
-                _vwin = str(args.get("window_title") or "")
-                if _vtxt:
-                    pre_count = await self._bounded(_count_text_in_window, _vwin, _vtxt, timeout=15, default=None)
+            if verify_needle:
+                pre_count = await self._bounded(
+                    _count_text_in_window, str(args.get("window_title") or ""),
+                    verify_needle, timeout=15, default=None)
 
             result = await self._run_tool(tool_name, args)
 
-            # Track what to verify later (message text OR attached filename).
-            if result.get("ok"):
+            # Track what to verify later.
+            if result.get("ok") and verify_needle:
                 win = str(args.get("window_title") or "")
-                if tool_name in ("set_text", "type_in_window"):
-                    txt = str(args.get("text") or "")
-                    if txt:
-                        art = _basename_if_path(txt)
-                        if art != txt:          # was a file path (e.g. Open dialog)
-                            typed = {"window": "", "text": art, "before": pre_count}   # scan chat windows
-                        else:
-                            typed = {"window": win, "text": txt, "before": pre_count}
-                elif tool_name in ("pick_file_in_dialog", "attach_file"):
-                    art = _basename_if_path(str(args.get("file_path") or ""))
-                    if art:
-                        # verify against chat-app windows (dialog is gone by then)
-                        typed = {"window": "", "text": art, "before": pre_count}
+                # path-typed-into-dialog or file tool → scan all chat windows
+                scan = is_file_tool or (verify_needle != str(args.get("text") or ""))
+                typed = {"window": "" if scan else win, "text": verify_needle,
+                         "before": pre_count, "is_file": is_file_tool}
 
             log.info(
                 "engine_step",
