@@ -692,36 +692,89 @@ class LaptopNative:
         cfg["send_btn"] = _merge("send_btn", self._GENERIC_SEND)
         return cfg
 
+    @staticmethod
+    def _hwnd_for(title_substring: str) -> int:
+        """First visible/minimized top-level window whose title contains the
+        substring. 0 if none."""
+        try:
+            import win32gui
+            found = {"h": 0}
+
+            def _cb(h, _):
+                t = win32gui.GetWindowText(h) or ""
+                if t and title_substring.lower() in t.lower():
+                    found["h"] = h
+
+            win32gui.EnumWindows(_cb, None)
+            return found["h"]
+        except Exception:
+            return 0
+
+    def move_window(self, title_substring: str, x: int, y: int) -> dict:
+        """Move a window (restoring it first if minimized) to (x, y) — keeping
+        its size. Used for OFF-SCREEN sending: park the app at negative coords
+        so the user never sees it, type via keyboard/UIA, then move it back +
+        minimize."""
+        try:
+            import win32con
+            import win32gui
+            h = self._hwnd_for(title_substring)
+            if not h:
+                return {"ok": False, "error": "window not found"}
+            if win32gui.IsIconic(h):
+                win32gui.ShowWindow(h, win32con.SW_RESTORE)
+                time.sleep(0.3)
+            r = win32gui.GetWindowRect(h)
+            w, ht = r[2] - r[0], r[3] - r[1]
+            win32gui.SetWindowPos(h, 0, int(x), int(y), w, ht,
+                                  win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE)
+            return {"ok": True, "w": w, "h": ht}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:150]}
+
     def chat_file_method(self, app: str) -> str:
         """How this app accepts a file: 'paste' (WhatsApp — clipboard paste,
         reliable) or 'dialog' (Teams etc. — attach button + Open dialog, which
         is fragile via UIA, so the caller routes those to vision instead)."""
         return self._resolve_chat_cfg(app).get("file_via", "dialog")
 
-    def _open_contact_chat(self, app: str, contact: str) -> dict:
+    _OFFSCREEN_X = -3200   # park apps here so the user never sees them
+
+    def _open_contact_chat(self, app: str, contact: str, off_screen: bool = False) -> dict:
         """Shared opener: bring the app foreground, search the contact, open
-        the chat. Returns {ok, win, cfg, pag} or {ok: False, error}. Used by
-        both text-send and file-send so the flow stays identical. Works for
-        ANY chat app via _resolve_chat_cfg (generic label detection)."""
+        the chat. Returns {ok, win, cfg, pag} or {ok: False, error}. Works for
+        ANY chat app via _resolve_chat_cfg (generic label detection).
+
+        off_screen: park the window at negative coords first → the user never
+        SEES it (we type via keyboard/UIA which only needs foreground, not
+        visibility). chat_send moves it back + minimizes after."""
         cfg = self._resolve_chat_cfg(app)
         win = cfg["window"]
         pag = _get_pyautogui()
-        fv = self.focus_and_verify(win)
-        if not fv.get("ok"):
-            # App band/closed hai → khud kholo (Start menu se, human-tarah —
-            # kisi bhi app ke liye). Warna deterministic fail ho ke SLOW engine
-            # pe gir jata tha ("whatsapp on hota hai, bot late" wali shikayat).
-            self._open_app_via_start(win)
+        if off_screen:
+            # ensure the window exists (open if needed), then park off-screen
+            if not self.move_window(win, self._OFFSCREEN_X, 0).get("ok"):
+                self._open_app_via_start(win)
+                time.sleep(0.3)
+                self.move_window(win, self._OFFSCREEN_X, 0)
+            self.focus_and_verify(win)   # foreground but off-screen (invisible)
+            if not self._focus_any(win, cfg["search"], "Edit"):
+                return {"ok": False, "error": f"{win} ka search box nahi mila"}
+        else:
             fv = self.focus_and_verify(win)
             if not fv.get("ok"):
-                return {"ok": False, "error": f"{win} khol/foreground nahi kar paya ({fv.get('error','')})"}
-        if not self._focus_any(win, cfg["search"], "Edit"):
-            return {"ok": False, "error": f"{win} ka search box nahi mila"}
+                # App band hai → khud kholo (Start menu, human-tarah, any app).
+                self._open_app_via_start(win)
+                fv = self.focus_and_verify(win)
+                if not fv.get("ok"):
+                    return {"ok": False, "error": f"{win} khol/foreground nahi kar paya ({fv.get('error','')})"}
+            if not self._focus_any(win, cfg["search"], "Edit"):
+                return {"ok": False, "error": f"{win} ka search box nahi mila"}
         self.paste_text(contact, clear_first=True)   # clear_first → no name doubling
         time.sleep(0.9)                                # let results populate
         pag.press("enter")                             # open top result
         time.sleep(0.8)                                # let the chat load
-        return {"ok": True, "win": win, "cfg": cfg, "pag": pag}
+        return {"ok": True, "win": win, "cfg": cfg, "pag": pag, "off_screen": off_screen}
 
     def _open_app_via_start(self, name: str) -> None:
         """Open an app the human way: Win → type name → Enter. Generic for ANY
@@ -737,7 +790,7 @@ class LaptopNative:
         except Exception as e:
             log.warning("open_app_via_start_failed", app=name, err=str(e)[:120])
 
-    def chat_send(self, app: str, contact: str, message: str) -> dict:
+    def chat_send(self, app: str, contact: str, message: str, off_screen: bool = True) -> dict:
         """DETERMINISTIC chat-app TEXT send — pure Python, NO LLM loop, NO
         ui_tree scans (which hang). Works for ANY contact on ANY laptop:
 
@@ -745,36 +798,47 @@ class LaptopNative:
             SetFocus or keystrokes go nowhere) -> paste message -> Enter
             -> verify the compose box CLEARED (= the message left).
 
-        Honest: ok=False with a clear reason if anything can't be confirmed.
+        off_screen=True: the app is parked OFF-SCREEN so the user never sees it
+        (typing uses keyboard/UIA — no visible window needed); restored + then
+        minimized afterwards. Honest: ok=False if anything can't be confirmed.
         """
-        opened = self._open_contact_chat(app, contact)
+        opened = self._open_contact_chat(app, contact, off_screen=off_screen)
         if not opened.get("ok"):
             return opened
         win, cfg, pag = opened["win"], opened["cfg"], opened["pag"]
+        try:
+            # focus the COMPOSE box — critical for WebView keyboard focus
+            if not self._focus_any(win, cfg["compose"], "Edit") and \
+               not self._focus_any(win, cfg["compose"], ""):
+                return {"ok": False,
+                        "error": f"compose box nahi mila — '{contact}' ki chat shayad open nahi hui"}
 
-        # focus the COMPOSE box — critical for WebView keyboard focus
-        if not self._focus_any(win, cfg["compose"], "Edit") and \
-           not self._focus_any(win, cfg["compose"], ""):
-            return {"ok": False,
-                    "error": f"compose box nahi mila — '{contact}' ki chat shayad open nahi hui"}
+            self.paste_text(message, clear_first=False)
+            time.sleep(0.4)
+            pag.press("enter")
+            time.sleep(0.9)
 
-        self.paste_text(message, clear_first=False)
-        time.sleep(0.4)
-        pag.press("enter")
-        time.sleep(0.9)
-
-        # verify: the compose box should now be EMPTY (message left)
-        needle = message.strip().lower()
-        for _ in range(3):
-            val = self.get_element_value(win, cfg["compose"][0])
-            if val.get("ok"):
-                cur = (val.get("value") or "").strip().lower()
-                if needle not in cur:      # box cleared → it sent
-                    return {"ok": True, "verified": True,
-                            "msg": f"'{message}' {contact} ko bhej diya (compose box clear ho gaya = chala gaya)"}
-            time.sleep(0.5)
-        return {"ok": False, "verified": False,
-                "msg": f"'{message}' type to kiya par compose box clear nahi hua — ho sakta hai na gaya ho, zara khud dekh lein"}
+            # verify: the compose box should now be EMPTY (message left)
+            needle = message.strip().lower()
+            for _ in range(3):
+                val = self.get_element_value(win, cfg["compose"][0])
+                if val.get("ok"):
+                    cur = (val.get("value") or "").strip().lower()
+                    if needle not in cur:      # box cleared → it sent
+                        return {"ok": True, "verified": True,
+                                "msg": f"'{message}' {contact} ko bhej diya"
+                                       + (" (off-screen — dikhi bhi nahi)" if off_screen else "")}
+                time.sleep(0.5)
+            return {"ok": False, "verified": False,
+                    "msg": f"'{message}' type to kiya par compose box clear nahi hua — ho sakta hai na gaya ho, zara khud dekh lein"}
+        finally:
+            # move the window back on-screen so it isn't left parked off-screen
+            # (the caller's cleanup then minimizes it → dashboard stays in front)
+            if off_screen:
+                try:
+                    self.move_window(win, 80, 60)
+                except Exception:
+                    pass
 
     def chat_send_file(self, app: str, contact: str, file_path: str, caption: str = "") -> dict:
         """DETERMINISTIC chat-app FILE/DOCUMENT send. Per-app because WebViews
