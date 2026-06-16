@@ -127,6 +127,16 @@ class LaptopNative:
         except Exception as e:
             return {"ok": False, "error": str(e)[:200]}
 
+    @staticmethod
+    def _mark_bot_input(seconds: float = 0.6) -> None:
+        """Tell the away-mode hook 'the BOT is about to send input now' so the
+        bot's own clicks/keystrokes aren't mistaken for the user returning."""
+        try:
+            from app.services import away_mode
+            away_mode.mark_bot_acting(seconds)
+        except Exception:
+            pass
+
     def paste_text(self, text: str, clear_first: bool = True) -> dict:
         """Type INSTANTLY by setting the clipboard and pressing Ctrl+V.
 
@@ -145,6 +155,7 @@ class LaptopNative:
                 win32clipboard.CloseClipboard()
             pag = _get_pyautogui()
             time.sleep(0.05)
+            self._mark_bot_input(1.0)   # bot input window (covers Ctrl+A/V + Enter after)
             if clear_first:
                 pag.hotkey("ctrl", "a")   # select existing → paste replaces it
                 time.sleep(0.05)
@@ -502,6 +513,7 @@ class LaptopNative:
             label = target.window_text() or element_name
             # REAL click first — reliably triggers WebView controls.
             try:
+                self._mark_bot_input(0.6)
                 target.click_input()
                 return {"ok": True, "invoked": label, "via": "click"}
             except Exception:
@@ -891,65 +903,99 @@ class LaptopNative:
         plainly if we can't.
         """
         import os
+        # DIAGNOSTIC trace — writes each step to server/data/_filesend_trace.txt
+        # so we can SEE exactly where Teams file-send fails (no more guessing).
+        _tp = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "data", "_filesend_trace.txt"))
+        _log: list[str] = []
+
+        def T(msg: str):
+            _log.append(msg)
+            try:
+                with open(_tp, "w", encoding="utf-8") as f:
+                    f.write("\n".join(_log))
+            except Exception:
+                pass
+            log.info("filesend_step", step=str(msg)[:160])
+
         p = os.path.abspath(os.path.expandvars(os.path.expanduser((file_path or "").strip().strip('"'))))
+        T(f"START app={app} contact={contact!r} file={p}")
         if not os.path.isfile(p):
+            T("FAIL: file not found on disk")
             return {"ok": False, "error": f"file nahi mili: {p}"}
         base = os.path.basename(p)
 
         opened = self._open_contact_chat(app, contact)
+        T(f"open_contact_chat ok={opened.get('ok')} err={opened.get('error','')}")
         if not opened.get("ok"):
             return opened
         win, cfg, pag = opened["win"], opened["cfg"], opened["pag"]
 
-        # ── STEP 1: CLIPBOARD PASTE first (fastest, simplest) ──
-        # WhatsApp AND modern Teams (Edge WebView) accept a pasted file. Focus
-        # compose → paste the file (CF_HDROP) → preview → Enter. We then VERIFY
-        # the filename actually appears in the chat; only if it does NOT do we
-        # fall back to the attach-button/dialog flow (so no double-attach).
-        self._focus_any(win, cfg["compose"], "Edit") or self._focus_any(win, cfg["compose"], "")
-        if self.attach_file(win, cfg["compose"][0], p).get("ok"):
-            time.sleep(1.6)                       # let the preview render
+        # ── STEP 1: CLIPBOARD PASTE first ──
+        focused = self._focus_any(win, cfg["compose"], "Edit") or self._focus_any(win, cfg["compose"], "")
+        T(f"compose focus={focused}")
+        att = self.attach_file(win, cfg["compose"][0], p)
+        T(f"paste attach_file ok={att.get('ok')} err={att.get('error','')}")
+        if att.get("ok"):
+            time.sleep(1.6)
             if caption:
                 self.paste_text(caption, clear_first=False)
                 time.sleep(0.3)
-            pag.press("enter")                    # send (if nothing attached → empty, harmless)
+            pag.press("enter")
             time.sleep(1.8)
-            # robust verify (gives a genuine paste a fair chance before fallback)
+            seen = False
             for _ in range(3):
                 if self._text_in_window(win, base):
-                    return {"ok": True, "verified": True,
-                            "msg": f"'{base}' {contact} ko bhej diya (paste se — fast)"}
+                    seen = True
+                    break
                 time.sleep(0.7)
+            T(f"paste verify seen={seen}")
+            if seen:
+                return {"ok": True, "verified": True,
+                        "msg": f"'{base}' {contact} ko bhej diya (paste se — fast)"}
 
-        # ── STEP 2: paste didn't attach → attach button + OS dialog (VISION) ──
-        # Universal, no hardcoded labels: vision SEES + clicks the attach button;
-        # the OS "Open" dialog is the same on every Windows (path paste + Enter).
+        # ── STEP 2: attach button + OS dialog (VISION-hybrid) ──
         from app.services.laptop_control.vision_control import VisionController
         vc = VisionController.get()
-        if not self._invoke_any(win, cfg.get("attach_btn", []), "Button"):
-            if not vc.click_target("the attach / paperclip / '+' button to add or upload a file").get("ok"):
+        btn_uia = self._invoke_any(win, cfg.get("attach_btn", []), "Button")
+        T(f"attach btn UIA={btn_uia}")
+        if not btn_uia:
+            v = vc.click_target("the attach / paperclip / '+' button to add or upload a file")
+            T(f"attach btn VISION ok={v.get('ok')} via={v.get('via','')}")
+            if not v.get("ok"):
+                T("FAIL: attach button not found (paste+UIA+vision)")
                 return {"ok": False, "error": "file attach nahi kar paya (paste + button + vision sab try kiye)"}
         time.sleep(1.0)
-        if self._find_window("Open") is None:
-            if not self._invoke_any(win, cfg.get("upload_item", []), "MenuItem") and \
-               not self._invoke_any(win, cfg.get("upload_item", []), "Button"):
-                vc.click_target("the 'Upload from this device' / 'Attach from computer' option")
+        dlg_now = self._find_window("Open") is not None
+        T(f"Open dialog after attach? {dlg_now}")
+        if not dlg_now:
+            up_uia = (self._invoke_any(win, cfg.get("upload_item", []), "MenuItem")
+                      or self._invoke_any(win, cfg.get("upload_item", []), "Button"))
+            T(f"upload-from-device UIA={up_uia}")
+            if not up_uia:
+                v = vc.click_target("the 'Upload from this device' / 'Attach from computer' option")
+                T(f"upload-from-device VISION ok={v.get('ok')}")
             time.sleep(1.2)
         picked = self._pick_open_dialog(p)
+        T(f"pick_open_dialog ok={picked.get('ok')} dlg={picked.get('dialog','')} err={picked.get('error','')}")
         if not picked.get("ok"):
             return {"ok": False, "error": f"Open dialog handle nahi hua: {picked.get('error','')}"}
-        time.sleep(2.2)                            # let it upload
+        time.sleep(2.2)
         if caption:
             self._focus_any(win, cfg["compose"], "Edit")
             self.paste_text(caption, clear_first=False)
             time.sleep(0.3)
-        if not self._invoke_any(win, cfg.get("send_btn", []), "Button"):
-            if not vc.click_target("the Send button to send the message/file").get("ok"):
+        send_uia = self._invoke_any(win, cfg.get("send_btn", []), "Button")
+        T(f"send btn UIA={send_uia}")
+        if not send_uia:
+            v = vc.click_target("the Send button to send the message/file")
+            T(f"send btn VISION ok={v.get('ok')}")
+            if not v.get("ok"):
                 pag.hotkey("ctrl", "enter")
+                T("send via Ctrl+Enter fallback")
         time.sleep(1.8)
-
-        # best-effort verify: does the filename now show in the chat window?
-        if self._text_in_window(win, base):
+        final_seen = self._text_in_window(win, base)
+        T(f"FINAL verify seen={final_seen}")
+        if final_seen:
             return {"ok": True, "verified": True,
                     "msg": f"'{base}' {contact} ko bhej diya (chat mein file nazar aa rahi hai)"}
         return {"ok": False, "verified": False,

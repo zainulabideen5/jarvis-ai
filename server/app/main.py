@@ -58,6 +58,14 @@ async def lifespan(app: FastAPI):
     from app.services.universal_engine.recipes import RecipeStore
     RecipeStore.ensure_table()
 
+    # Start the real-user-input monitor (LL hook) so away/take-over auto-release
+    # is ready from boot — it ignores the bot's own input, reacts to the user's.
+    try:
+        from app.services import away_mode
+        away_mode.start_real_input_monitor()
+    except Exception as e:
+        log.warning("away_monitor_start_failed", error=str(e))
+
     # Start background processor
     processor = ChunkProcessor(config)
     processor_task = asyncio.create_task(processor.run())
