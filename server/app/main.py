@@ -86,9 +86,11 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown
+    # Shutdown — cancel AND await so cleanup runs and no "task destroyed while
+    # pending" warnings leak.
     processor_task.cancel()
     notifier_task.cancel()
+    await asyncio.gather(processor_task, notifier_task, return_exceptions=True)
     log.info("server_stopped")
 
 

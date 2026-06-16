@@ -19,6 +19,11 @@ export default function ChatPage() {
   const endRef = useRef(null);
   const recognitionRef = useRef(null);
   const fileInputRef = useRef(null);
+  // Mirror `loading` into a ref so the history poller (a stable-closure
+  // interval) can SKIP overwriting messages while a send is in flight —
+  // otherwise the 5s poll wiped optimistic bubbles + confirm buttons mid-send.
+  const loadingRef = useRef(false);
+  useEffect(() => { loadingRef.current = loading; }, [loading]);
 
   // While a request is in flight, poll the engine's live progress so the
   // user sees what it's doing ("Likh raha hun…") instead of a frozen spinner.
@@ -90,6 +95,8 @@ export default function ChatPage() {
   // Load chat history from DB on mount + poll for new messages every 5s
   useEffect(() => {
     const loadHistory = () => {
+      // Don't clobber in-flight optimistic messages / confirm buttons.
+      if (loadingRef.current && historyLoaded) return;
       api.getChatHistory().then((history) => {
         if (history.length > 0) {
           setMessages(history.map((m) => ({ role: m.role, content: m.content, actions: m.actions || [] })));
@@ -220,6 +227,11 @@ export default function ChatPage() {
       ]);
     } catch (err) {
       setMessages((prev) => [...prev, { role: 'assistant', content: `Stop error: ${err.message}` }]);
+    } finally {
+      // Unblock the UI immediately — otherwise the input stays disabled + the
+      // spinner keeps spinning until the (now-stopping) backend call returns.
+      setLoading(false);
+      setProgressLine('');
     }
   };
 

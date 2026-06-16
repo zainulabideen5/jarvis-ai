@@ -192,7 +192,7 @@ class LLMClient:
                     )
                     continue  # try next key in the pool
                 log.warning("groq_request_failed", error=str(e)[:200])
-                break  # non-quota error — don't burn through all keys
+                continue  # transient error — try the next key, don't abandon the tier
 
         # Tier 2: Cerebras — same multi-key walk
         for slot in self._cerebras_pool:
@@ -215,7 +215,7 @@ class LLMClient:
                     log.info("cerebras_key_rate_limited", key_suffix=slot["key"][-6:])
                     continue
                 log.warning("cerebras_request_failed", error=str(e)[:200])
-                break
+                continue
 
         # Tier 3: OpenRouter — free models pool
         for slot in self._openrouter_pool:
@@ -234,7 +234,7 @@ class LLMClient:
                     log.info("openrouter_key_rate_limited", key_suffix=slot["key"][-6:])
                     continue
                 log.warning("openrouter_request_failed", error=str(e)[:200])
-                break
+                continue
 
         # Tier 4: Gemini — multi-key walk
         for slot in self._gemini_pool:
@@ -253,7 +253,7 @@ class LLMClient:
                     log.info("gemini_key_rate_limited", key_suffix=slot["key"][-6:])
                     continue
                 log.warning("gemini_request_failed", error=str(e)[:200])
-                break
+                continue
 
         raise RuntimeError(
             "All LLM providers exhausted (Groq, Cerebras, Gemini) — "

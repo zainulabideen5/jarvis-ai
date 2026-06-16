@@ -1121,7 +1121,7 @@ async def approve_task(task_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Task).where(Task.id == task_id))
     task = result.scalar_one_or_none()
     if not task:
-        return {"error": "Task not found"}, 404
+        raise HTTPException(status_code=404, detail="Task not found")
 
     task.status = "approved"
     await db.commit()
@@ -1134,7 +1134,7 @@ async def reject_task(task_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Task).where(Task.id == task_id))
     task = result.scalar_one_or_none()
     if not task:
-        return {"error": "Task not found"}, 404
+        raise HTTPException(status_code=404, detail="Task not found")
 
     task.status = "rejected"
     await db.commit()
@@ -1154,7 +1154,7 @@ async def update_task_status(
     result = await db.execute(select(Task).where(Task.id == task_id))
     task = result.scalar_one_or_none()
     if not task:
-        return {"error": "Task not found"}, 404
+        raise HTTPException(status_code=404, detail="Task not found")
 
     task.status = body.status
     if body.status == "completed":
@@ -1225,7 +1225,7 @@ async def update_rule(
     result = await db.execute(select(Rule).where(Rule.id == rule_id))
     rule = result.scalar_one_or_none()
     if not rule:
-        return {"error": "Rule not found"}, 404
+        raise HTTPException(status_code=404, detail="Rule not found")
 
     for key, val in body.model_dump().items():
         setattr(rule, key, val)
@@ -1239,7 +1239,7 @@ async def delete_rule(rule_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Rule).where(Rule.id == rule_id))
     rule = result.scalar_one_or_none()
     if not rule:
-        return {"error": "Rule not found"}, 404
+        raise HTTPException(status_code=404, detail="Rule not found")
 
     await db.delete(rule)
     await db.commit()
@@ -1252,7 +1252,7 @@ async def toggle_rule(rule_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Rule).where(Rule.id == rule_id))
     rule = result.scalar_one_or_none()
     if not rule:
-        return {"error": "Rule not found"}, 404
+        raise HTTPException(status_code=404, detail="Rule not found")
 
     rule.enabled = not rule.enabled
     await db.commit()
@@ -1268,7 +1268,7 @@ async def stop_agent(agent_id: str):
     from app.ws.handler import connected_agents
     ws = connected_agents.get(agent_id)
     if not ws:
-        return {"error": "Agent not connected"}, 404
+        raise HTTPException(status_code=404, detail="Agent not connected")
     try:
         await ws.send_json({"command": "stop"})
         await ws.close()
@@ -1347,7 +1347,7 @@ async def get_client(client_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Client).where(Client.id == client_id))
     client = result.scalar_one_or_none()
     if not client:
-        return {"error": "Client not found"}, 404
+        raise HTTPException(status_code=404, detail="Client not found")
 
     # Get client's tasks
     tasks_result = await db.execute(
@@ -1408,7 +1408,7 @@ async def update_client(
     result = await db.execute(select(Client).where(Client.id == client_id))
     client = result.scalar_one_or_none()
     if not client:
-        return {"error": "Client not found"}, 404
+        raise HTTPException(status_code=404, detail="Client not found")
 
     for key, val in body.model_dump().items():
         setattr(client, key, val or None)
@@ -1422,7 +1422,7 @@ async def delete_client(client_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Client).where(Client.id == client_id))
     client = result.scalar_one_or_none()
     if not client:
-        return {"error": "Client not found"}, 404
+        raise HTTPException(status_code=404, detail="Client not found")
 
     await db.delete(client)
     await db.commit()
@@ -1435,7 +1435,7 @@ async def assign_speaker(client_id: int, body: dict, db: AsyncSession = Depends(
     result = await db.execute(select(Client).where(Client.id == client_id))
     client = result.scalar_one_or_none()
     if not client:
-        return {"error": "Client not found"}, 404
+        raise HTTPException(status_code=404, detail="Client not found")
 
     client.speaker_label = body.get("speaker_label", "")
     await db.commit()
