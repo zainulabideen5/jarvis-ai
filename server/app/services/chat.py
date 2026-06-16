@@ -466,6 +466,13 @@ class ChatService:
             )
             return engine_result
 
+        # PRODUCT PICK — agar abhi maine store ke products dikhaye the aur user
+        # ne ek chuna ("2 order karo" / "Gathered wala chahiye"), uska page kholo.
+        if getattr(self, "_last_shop", None):
+            pick = await self._maybe_product_pick(user_message)
+            if pick is not None:
+                return pick
+
         # VISION control — if the user asks JARVIS to "dekh ke" / "screen se" /
         # "vision se" do something, run the see→act loop (works on ANY app/web).
         if self._is_vision_request(user_message) or await self._is_action_intent(user_message):
@@ -484,6 +491,13 @@ class ChatService:
                 res = await asyncio.to_thread(nat.chat_send, app, contact, message)
                 if not res.get("ok"):
                     res = None     # deterministic couldn't — fall to vision
+            # SHOPPING: "X store se Y ke prices batao / order karo" — store ke
+            # live product data se prices CHAT mein (vision se nahi; reliable +
+            # kisi bhi store pe). Kuch na mile to vision browser pe try karega.
+            if res is None:
+                shop = await self._try_shopping(user_message)
+                if shop is not None:
+                    return shop
             if res is None:
                 res = await asyncio.to_thread(self._run_vision, user_message)
 
@@ -1615,6 +1629,99 @@ class ChatService:
         except Exception as e:
             log.warning("llm_extract_send_failed", err=str(e)[:120])
         return None
+
+    async def _extract_shopping(self, message: str) -> dict | None:
+        """User kisi STORE se product dekhna/price/order karna chahta hai? To
+        {store, query, want} nikaalo — warna None. General, koi keyword nahi."""
+        import json as _json
+        prompt = (
+            "Tu samajhta hai ke user kisi ONLINE STORE se koi PRODUCT dhoondh/"
+            "khareed/price-pata karna chahta hai ya nahi. Agar HAAN, SIRF yeh JSON do:\n"
+            '{"store":"brand ya website (jaise outfitters, khaadi, ya poora URL)", '
+            '"query":"product jo dhoondhna hai (jaise black t-shirt, jeans)", '
+            '"want":"prices|order"}\n'
+            "Agar yeh store-shopping ka request NAHI hai (aam baat, message bhejna, "
+            "app kholna, sawal) to SIRF {} do. store ya query na ho to bhi {} do.\n\n"
+            f"User: {message}\nJSON:"
+        )
+        try:
+            client = self._get_client()
+            resp = await asyncio.to_thread(
+                lambda: client.chat.completions.create(
+                    model=self._config.groq_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0, max_tokens=120,
+                )
+            )
+            txt = (resp.choices[0].message.content or "").strip()
+            obj = _json.loads(txt[txt.find("{"):txt.rfind("}") + 1])
+            store = (obj.get("store") or "").strip()
+            query = (obj.get("query") or "").strip()
+            if store and query:
+                return {"store": store, "query": query,
+                        "want": (obj.get("want") or "prices").strip().lower()}
+        except Exception as e:
+            log.warning("extract_shopping_failed", err=str(e)[:120])
+        return None
+
+    async def _try_shopping(self, message: str) -> dict | None:
+        """Store se products + LIVE prices nikaal ke CHAT mein dikhao (vision se
+        nahi). Kuch mile to reply dict; warna None (caller vision pe fall kare)."""
+        info = await self._extract_shopping(message)
+        if not info:
+            return None
+        from app.services.shopping import search_products
+        res = await asyncio.to_thread(search_products, info["store"], info["query"], 8)
+        if not res.get("ok"):
+            return None                       # let vision try the open browser
+        prods = res["products"]
+        # remember for a follow-up "2 order karo" / "<naam> chahiye"
+        self._last_shop = {"store_url": res["store_url"], "products": prods,
+                           "query": info["query"]}
+        lines = [f"{i+1}. {p['title']} — PKR {p['price']}" for i, p in enumerate(prods)]
+        store_name = res["store_url"].split("//")[-1].replace("www.", "")
+        reply = ("🛍️ Boss, {} pe '{}' ke options:\n\n{}\n\n"
+                 "Kaunsa chahiye? Number batao ya '<naam> order karo' — main woh "
+                 "page khol dunga.").format(store_name, info["query"], "\n".join(lines))
+        await self._save_message("assistant", reply, "[]")
+        return {"reply": reply, "actions": [{"action": "shop_search",
+                "status": "success", "count": len(prods)}]}
+
+    async def _maybe_product_pick(self, message: str) -> dict | None:
+        """Pichle dikhaye products mein se user ne ek chuna (number ya naam)? To
+        uska page browser mein khol do. Warna None."""
+        import re as _re
+        shop = getattr(self, "_last_shop", None)
+        if not shop or not shop.get("products"):
+            return None
+        prods = shop["products"]
+        low = message.lower().strip()
+        chosen = None
+        m = _re.search(r"\b(\d{1,2})\b", low)               # "2 order karo"
+        if m:
+            idx = int(m.group(1)) - 1
+            if 0 <= idx < len(prods):
+                chosen = prods[idx]
+        if chosen is None:                                   # by title words
+            for p in prods:
+                words = [w for w in _re.split(r"\s+", p["title"].lower()) if len(w) > 2]
+                if words and sum(w in low for w in words) >= max(1, len(words) // 2):
+                    chosen = p
+                    break
+        if chosen is None:
+            return None
+        url = chosen.get("url")
+        if not url:
+            return None
+        import webbrowser
+        await asyncio.to_thread(webbrowser.open, url)
+        self._last_shop = None
+        reply = ("✅ Boss, '{}' (PKR {}) ka page khol diya browser mein. "
+                 "Size/cart aap dekh lo — checkout pe payment se pehle main "
+                 "confirm lunga.").format(chosen["title"], chosen["price"])
+        await self._save_message("assistant", reply, "[]")
+        return {"reply": reply, "actions": [{"action": "open_product",
+                "status": "success", "url": url}]}
 
     def _parse_chat_app_and_contact(self, task: str) -> tuple[str, str] | None:
         """Lighter parse for FILE sends: just (app, contact), no message needed.
