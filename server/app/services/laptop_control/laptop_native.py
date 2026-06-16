@@ -980,19 +980,50 @@ class LaptopNative:
                 continue
         return False
 
-    def _pick_open_dialog(self, file_path: str) -> dict:
-        """Fill a Windows 'Open' file dialog: set the path into 'File name' and
-        click Open. (Same logic the engine's pick_file_in_dialog uses.)"""
-        for dlg in ("Open", "Choose File to Upload", "Select"):
-            if self._find_window(dlg) is None:
-                continue
-            r = self.uia_type(dlg, "File name", file_path, control_type="Edit")
-            if not r.get("ok"):
-                r = self.uia_type(dlg, "", file_path, control_type="Edit")
+    def _pick_open_dialog(self, file_path: str, timeout: float = 5.0) -> dict:
+        """Fill a Windows 'Open' file dialog with the FULL path, then open it.
+        Robust + universal: waits for the dialog, focuses the 'File name' field
+        (UIA, else vision), PASTES the full path (clipboard — reliable for long
+        paths), then presses Enter (Enter = Open, more reliable than finding the
+        Open button). The full path means the current folder doesn't matter."""
+        pag = _get_pyautogui()
+        # 1) wait for the OS dialog to actually appear
+        dlg = None
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline and not dlg:
+            for name in ("Open", "Choose File to Upload", "Select File", "Select"):
+                if self._find_window(name) is not None:
+                    dlg = name
+                    break
+            if not dlg:
+                time.sleep(0.3)
+        if not dlg:
+            return {"ok": False, "error": "Open dialog nahi khula"}
+
+        # 2) focus the "File name" field — UIA first, else vision (universal)
+        focused = (self.focus_element(dlg, "File name", "Edit").get("ok")
+                   or self.focus_element(dlg, "File name", "ComboBox").get("ok")
+                   or self.focus_element(dlg, "File name", "").get("ok"))
+        if not focused:
+            try:
+                from app.services.laptop_control.vision_control import VisionController
+                VisionController.get().click_target("the 'File name' text input box in the Open dialog")
+                focused = True
+            except Exception:
+                pass
+        time.sleep(0.2)
+
+        # 3) paste the full path + Enter (opens the file)
+        self.paste_text(file_path, clear_first=True)
+        time.sleep(0.3)
+        pag.press("enter")
+        time.sleep(0.7)
+        # if the dialog is still open, the path field may not have had focus —
+        # one more try: click Open button directly
+        if self._find_window(dlg) is not None:
             self.uia_invoke(dlg, "Open", "Button")
             time.sleep(0.6)
-            return {"ok": True, "dialog": dlg}
-        return {"ok": False, "error": "Open dialog nahi mila"}
+        return {"ok": True, "dialog": dlg}
 
     def _text_in_window(self, window_title: str, needle: str, timeout: float = 3.0) -> bool:
         """Bounded scan: is `needle` text present anywhere in the window? Used
