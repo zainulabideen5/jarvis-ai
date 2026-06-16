@@ -473,6 +473,17 @@ class ChatService:
             if pick is not None:
                 return pick
 
+        # EMAIL — confirm/edit a parked draft, ya naya email-send. Apni branch
+        # (action-classifier pe depend nahi) taake "email bhejo" kabhi web-search
+        # ya vision pe na chala jaye. Outlook desktop (silent) se jata hai.
+        if getattr(self, "_email_session", None):
+            r = await self._resume_email_session(user_message)
+            if r is not None:
+                return r
+        mail = await self._try_email_send(user_message)
+        if mail is not None:
+            return mail
+
         # VISION control — if the user asks JARVIS to "dekh ke" / "screen se" /
         # "vision se" do something, run the see→act loop (works on ANY app/web).
         if self._is_vision_request(user_message) or await self._is_action_intent(user_message):
@@ -1724,6 +1735,125 @@ class ChatService:
         await self._save_message("assistant", reply, "[]")
         return {"reply": reply, "actions": [{"action": "open_product",
                 "status": "success", "url": url}]}
+
+    async def _compose_email(self, instruction: str) -> dict | None:
+        """User ke instruction se ek PROPER professional email likho. Returns
+        {is_email, to, subject, body} ya None agar email-send nahi hai."""
+        import json as _json
+        prompt = (
+            "User shayad ek EMAIL BHEJNA chahta hai (sirf email kholna/sawal nahi). "
+            "Agar yeh email-BHEJNE ka request hai to uske instruction se ek PROPER, "
+            "PROFESSIONAL email likho. SIRF yeh JSON do:\n"
+            '{"is_email": true, "to":"recipient email ya naam", '
+            '"subject":"saaf subject line", "body":"poora email body — greeting, '
+            'instruction ke mutabiq content, professional sign-off"}\n'
+            "Business email ke liye munasib professional tone (aam taur pe English). "
+            "ZAROORI: koi placeholder ya bracket [ ] (jaise [Your Name], [list tasks]) "
+            "BILKUL mat daalo — jo detail di gayi hai usi se clean, complete, "
+            "ready-to-send email likho; jo nahi maloom usko natural/generic tarike se "
+            "likh do ya chhod do, magar bracket kabhi nahi. "
+            "Sign-off mein app/service ka naam (Outlook, Gmail) ya koi banaya hua "
+            "naam mat daalo; sender ka asli naam na ho to sirf 'Best regards,' likh do. "
+            "Agar yeh email BHEJNE ka request NAHI hai (sirf app kholna, sawal, baat) "
+            'to: {"is_email": false}\n\n'
+            f"User: {instruction}\nJSON:"
+        )
+        try:
+            client = self._get_client()
+            resp = await asyncio.to_thread(
+                lambda: client.chat.completions.create(
+                    model=self._config.groq_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.2, max_tokens=800,
+                )
+            )
+            txt = (resp.choices[0].message.content or "").strip()
+            obj = _json.loads(txt[txt.find("{"):txt.rfind("}") + 1])
+            return obj if obj.get("is_email") else None
+        except Exception as e:
+            log.warning("compose_email_failed", err=str(e)[:120])
+            return None
+
+    async def _try_email_send(self, message: str) -> dict | None:
+        """Email-send branch (action-classifier se independent). Email compose
+        karke CONFIRM ke liye park karo. Outlook desktop (silent) se jayegi.
+        None agar yeh email-send nahi hai — caller aage badhe."""
+        import re as _re
+        low = message.lower()
+        addr = _re.search(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", message)
+        # cheap gate: bina email-cue ke LLM call mat karo
+        if not (addr or _re.search(r"\b(e[\s-]?mail|gmail|outlook|mail)\b", low)):
+            return None
+        # email kholne/sawal ko send mat samjho — sirf send-cue ho to aage badho
+        if not _re.search(r"\b(bhej|bhejo|bhejna|bhajo|send|likh|likho|likhna|draft|reply|forward)\b", low):
+            return None
+        draft = await self._compose_email(message)
+        if not draft:
+            return None
+        to = addr.group(0) if addr else (draft.get("to") or "").strip()
+        if not to:
+            reply = "📧 Boss, kis ko email bhejni hai? Email address ya client ka naam batao."
+            await self._save_message("assistant", reply, "[]")
+            return {"reply": reply, "actions": [], "awaiting_input": True}
+        subject = (draft.get("subject") or "(no subject)").strip()
+        body = (draft.get("body") or "").strip()
+        self._email_session = {"to": to, "subject": subject, "body": body}
+        reply = ("📧 Boss, yeh email tayyar hai — bhej dun? (Outlook se jayegi)\n\n"
+                 f"**To:** {to}\n**Subject:** {subject}\n\n{body}\n\n"
+                 "— 'haan / bhej do' likho to bhej deta hoon. Ya batao kya badalna hai.")
+        await self._save_message("assistant", reply, "[]")
+        return {"reply": reply, "awaiting_input": True,
+                "actions": [{"action": "email_draft", "status": "awaiting_confirm"}]}
+
+    async def _resume_email_session(self, message: str) -> dict | None:
+        """Draft confirm/cancel/edit handle karo."""
+        import re as _re
+        sess = getattr(self, "_email_session", None)
+        if not sess:
+            return None
+        low = message.lower().strip()
+        if any(w in low for w in ("cancel", "rehne do", "chodo", "chhodo",
+                                  "mat bhej", "nahi bhej", "nai bhej", "abhi nahi")):
+            self._email_session = None
+            reply = "Theek hai Boss, email nahi bheji."
+            await self._save_message("assistant", reply, "[]")
+            return {"reply": reply, "actions": []}
+        toks = set(_re.findall(r"[a-z]+", low))
+        explicit_send = bool(_re.search(r"\b(bhej|bhejo|bhejdo|bhej\s*do|send)\b", low))
+        pure_yes = (len(low.split()) <= 3 and bool(toks & {
+            "haan", "han", "ha", "haa", "yes", "ji", "ok", "okay",
+            "theek", "sahi", "kardo", "kar"}))
+        if explicit_send or pure_yes:
+            from app.services.laptop_control.email_sender import EmailSender
+            ok, msg = await asyncio.to_thread(
+                EmailSender.send, sess["to"], sess["subject"], sess["body"])
+            self._email_session = None
+            reply = f"{'✅' if ok else '⚠️'} {msg}"
+            await self._save_message("assistant", reply, "[]")
+            return {"reply": reply, "actions": [{"action": "send_email",
+                    "status": "success" if ok else "failed"}]}
+        # EDIT sirf tab jab message email ke baare mein lage; warna yeh ek NAYA
+        # unrelated command hai — draft chhod do aur normal routing pe jao
+        # (taake pending draft "outlook kholo" jaisi cheez hijack na kare).
+        edit_cues = ("subject", "body", "tone", "formal", "casual", "short", "chota",
+                     "bara", "bada", "greeting", "sign", "add", "likh", "badal",
+                     "badlo", "change", "edit", "email", "mail", "line", "point")
+        if not any(c in low for c in edit_cues):
+            self._email_session = None
+            return None
+        new = await self._compose_email(
+            f"Pichla email — Subject: {sess['subject']}\n{sess['body']}\n\n"
+            f"User ka badlav: {message}")
+        if new:
+            sess["subject"] = (new.get("subject") or sess["subject"]).strip()
+            sess["body"] = (new.get("body") or sess["body"]).strip()
+            self._email_session = sess
+            reply = ("📧 Update kar diya, Boss:\n\n"
+                     f"**To:** {sess['to']}\n**Subject:** {sess['subject']}\n\n"
+                     f"{sess['body']}\n\n— 'haan / bhej do' to bhej dun?")
+            await self._save_message("assistant", reply, "[]")
+            return {"reply": reply, "awaiting_input": True, "actions": []}
+        return None
 
     def _parse_chat_app_and_contact(self, task: str) -> tuple[str, str] | None:
         """Lighter parse for FILE sends: just (app, contact), no message needed.
