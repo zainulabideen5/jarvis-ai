@@ -680,6 +680,9 @@ class LaptopNative:
             "window": "Teams",
             # Teams' WebView ignores pasted files → must use the attach button.
             "file_via": "dialog",
+            # Teams' search box isn't reliably reachable via UIA labels → open
+            # the contact with VISION (see search box + result, click). Universal.
+            "search_via": "vision",
         },
     }
 
@@ -696,6 +699,7 @@ class LaptopNative:
         cfg = dict(self._CHAT_APP_UI.get(key, {}))
         cfg.setdefault("window", self._APP_WINDOW.get(key, key.title()))
         cfg.setdefault("file_via", "dialog")   # safest default; whatsapp overrides to paste
+        cfg.setdefault("search_via", "uia")    # teams overrides to "vision"
         # append generics (de-duped) so detection works on any UI
         def _merge(field, generics):
             cur = list(cfg.get(field, []))
@@ -766,30 +770,52 @@ class LaptopNative:
         cfg = self._resolve_chat_cfg(app)
         win = cfg["window"]
         pag = _get_pyautogui()
-        if off_screen:
-            # ensure the window exists (open if needed), then park off-screen
+        vision_search = cfg.get("search_via") == "vision"
+        # vision needs the window VISIBLE, so off-screen only applies to the
+        # fast UIA path (not vision-search apps like Teams).
+        use_off = off_screen and not vision_search
+
+        # bring the app foreground (open via Start menu if it isn't running)
+        if use_off:
             if not self.move_window(win, self._OFFSCREEN_X, 0).get("ok"):
                 self._open_app_via_start(win)
                 time.sleep(0.3)
                 self.move_window(win, self._OFFSCREEN_X, 0)
-            self.focus_and_verify(win)   # foreground but off-screen (invisible)
-            if not self._focus_any(win, cfg["search"], "Edit"):
-                return {"ok": False, "error": f"{win} ka search box nahi mila"}
+            self.focus_and_verify(win)
         else:
             fv = self.focus_and_verify(win)
             if not fv.get("ok"):
-                # App band hai → khud kholo (Start menu, human-tarah, any app).
                 self._open_app_via_start(win)
                 fv = self.focus_and_verify(win)
                 if not fv.get("ok"):
                     return {"ok": False, "error": f"{win} khol/foreground nahi kar paya ({fv.get('error','')})"}
-            if not self._focus_any(win, cfg["search"], "Edit"):
-                return {"ok": False, "error": f"{win} ka search box nahi mila"}
-        self.paste_text(contact, clear_first=True)   # clear_first → no name doubling
-        time.sleep(0.5)                                # let results populate
-        pag.press("enter")                             # open top result
-        time.sleep(0.45)                               # let the chat load
-        return {"ok": True, "win": win, "cfg": cfg, "pag": pag, "off_screen": off_screen}
+
+        # 1) FAST deterministic search (UIA) — unless the app is flagged vision-search
+        if not vision_search and self._focus_any(win, cfg["search"], "Edit"):
+            self.paste_text(contact, clear_first=True)   # clear_first → no doubling
+            time.sleep(0.5)                               # results populate
+            pag.press("enter")                            # open top result
+            time.sleep(0.45)                              # chat loads
+            return {"ok": True, "win": win, "cfg": cfg, "pag": pag, "off_screen": use_off}
+
+        # 2) VISION search (universal — Teams etc. where UIA search isn't reachable).
+        #    No hardcoded labels: vision SEES the search box + the result. Needs
+        #    the window visible, so bring it on-screen if it was parked off.
+        if use_off:
+            self.move_window(win, 80, 60)
+            self.focus_and_verify(win)
+        from app.services.laptop_control.vision_control import VisionController
+        vc = VisionController.get()
+        if not vc.click_target(
+                "the search box / search bar (usually near the top) to find a person or chat").get("ok"):
+            return {"ok": False, "error": f"{win}: search box nahi mila (UIA + vision dono)"}
+        self.paste_text(contact, clear_first=True)
+        time.sleep(1.3)   # let search results populate
+        if not vc.click_target(
+                f"the search result / contact named '{contact}' — click it to open that chat").get("ok"):
+            pag.press("enter")   # last resort
+        time.sleep(0.8)
+        return {"ok": True, "win": win, "cfg": cfg, "pag": pag, "off_screen": False}
 
     def _open_app_via_start(self, name: str) -> None:
         """Open an app the human way: Win → type name → Enter. Generic for ANY
