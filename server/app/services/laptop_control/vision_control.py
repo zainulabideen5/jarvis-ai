@@ -299,6 +299,41 @@ class VisionController:
             return f"key: {key}"
         return "unknown action"
 
+    # ---------------- universal single-shot click ----------------
+
+    def click_target(self, description: str, settle: float = 0.8) -> dict:
+        """UNIVERSAL: SEE the foreground window and click the element matching
+        `description` (e.g. 'the attach / paperclip button to add a file').
+        NO per-app labels, NO hardcoding — works on ANY app/version/language
+        because it's pure vision. One screenshot, one CLI call, one click.
+        Returns {ok, via} — ok=False if the element isn't found."""
+        window = self._foreground_window()
+        shot, offset = self._capture(window)
+        marks = self._enumerate(window)
+        marked = self._annotate(shot, marks, offset) if marks else shot
+        user_text = (
+            f"Is screen pe yeh element dhundo aur uspe click karo: '{description}'.\n"
+            f"Numbered elements:\n{self._marks_text(marks)}\n\n"
+            'JSON do: {"action":"click","mark":N} ya {"action":"click_xy","x":X,"y":Y} '
+            '(grid se pixel) — ya {"action":"fail"} agar bilkul na mile.'
+        )
+        try:
+            out = self._cli_vision(user_text, marked)
+        finally:
+            for f in {shot, marked}:
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
+        action = self._parse(out)
+        kind = (action.get("action") or "").lower()
+        if kind not in ("click", "click_xy"):
+            return {"ok": False, "error": f"'{description}' screen pe nahi mila"}
+        res = self._execute(action, marks, offset)
+        time.sleep(settle)
+        ok = ("nahi mila" not in res) and ("galat" not in res)
+        return {"ok": ok, "via": res}
+
     # ---------------- recipe: learn once → replay fast (ANY app) ----------------
 
     def _recipe_key(self, task: str):

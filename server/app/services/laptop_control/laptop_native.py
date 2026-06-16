@@ -888,25 +888,41 @@ class LaptopNative:
             pag.press("enter")                    # send from the preview
             time.sleep(1.2)
         else:
-            # Teams (and similar): attach button → upload-from-device → dialog
+            # Teams (and ANY other app): VISION-hybrid — no hardcoded labels, so
+            # it works for any app/version/language. Vision SEES + clicks the
+            # attach button (app-specific, universal via sight); the OS "Open"
+            # dialog is handled deterministically (same on every Windows).
+            from app.services.laptop_control.vision_control import VisionController
+            vc = VisionController.get()
+
+            # 1) try the known UIA attach buttons first (fast); else use vision
             if not self._invoke_any(win, cfg.get("attach_btn", []), "Button"):
-                return {"ok": False, "error": "attach button nahi mila"}
-            time.sleep(0.9)
-            for nm in cfg.get("upload_item", []):  # the menu item (if a menu opens)
-                if self.uia_invoke(win, nm, "MenuItem").get("ok") or \
-                   self.uia_invoke(win, nm, "Button").get("ok"):
-                    break
-            time.sleep(1.2)
-            picked = self._pick_open_dialog(p)     # fill "File name" + click Open
+                if not vc.click_target("the attach / paperclip / '+' button to add or upload a file").get("ok"):
+                    return {"ok": False, "error": "attach button nahi mila (UIA + vision dono)"}
+            time.sleep(1.0)
+
+            # 2) if a menu opened (no OS dialog yet), pick 'upload from this device'
+            if self._find_window("Open") is None:
+                if not self._invoke_any(win, cfg.get("upload_item", []), "MenuItem") and \
+                   not self._invoke_any(win, cfg.get("upload_item", []), "Button"):
+                    vc.click_target("the 'Upload from this device' / 'Attach from computer' option")
+                time.sleep(1.2)
+
+            # 3) OS Open dialog — universal Windows dialog, handle deterministically
+            picked = self._pick_open_dialog(p)
             if not picked.get("ok"):
                 return {"ok": False, "error": f"Open dialog handle nahi hua: {picked.get('error','')}"}
             time.sleep(2.2)                        # let it upload
+
             if caption:
                 self._focus_any(win, cfg["compose"], "Edit")
                 self.paste_text(caption, clear_first=False)
                 time.sleep(0.3)
+
+            # 4) send — known button, else vision, else Ctrl+Enter
             if not self._invoke_any(win, cfg.get("send_btn", []), "Button"):
-                pag.hotkey("ctrl", "enter")        # fallback send
+                if not vc.click_target("the Send button to send the message/file").get("ok"):
+                    pag.hotkey("ctrl", "enter")
             time.sleep(1.8)
 
         # best-effort verify: does the filename now show in the chat window?
