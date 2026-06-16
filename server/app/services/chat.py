@@ -460,7 +460,7 @@ class ChatService:
 
         # VISION control — if the user asks JARVIS to "dekh ke" / "screen se" /
         # "vision se" do something, run the see→act loop (works on ANY app/web).
-        if self._is_vision_request(user_message) or self._is_action_task(user_message):
+        if self._is_vision_request(user_message) or await self._is_action_intent(user_message):
             from app.services.laptop_control.laptop_native import LaptopNative
             nat = LaptopNative.get()
             # remember where the user was (dashboard) so we can return after
@@ -1429,6 +1429,34 @@ class ChatService:
     def _is_action_task(cls, message: str) -> bool:
         low = f" {message.strip().lower()} "
         return any(cue in low for cue in cls._ACTION_CUES)
+
+    async def _is_action_intent(self, message: str) -> bool:
+        """SMART router (not just keywords): does the user want JARVIS to DO
+        something on the computer/web (open app/site, order, click, fill, send,
+        control) vs just ANSWER a question? Keyword match is a fast hint; for
+        everything else the LLM decides — so ANY phrasing is understood, like
+        Claude. (User: 'main kuch bhi keh sakta hoon, keyword se kaam nahi chalega'.)"""
+        if self._is_action_task(message):
+            return True            # obvious action → skip the LLM call
+        prompt = (
+            "User ke message ka intent batao. SIRF ek JSON:\n"
+            '{"intent":"do"}   = computer/web pe KAAM karna hai (app ya website '
+            "kholo, order/buy/cart, kisi cheez ka price site se nikalo, click/fill/"
+            "navigate, message/file bhejo, app control). Yani screen pe kuch karna.\n"
+            '{"intent":"answer"} = sirf sawal/baat/maloomat — jiska jawab chat me '
+            "likhna hai, computer pe koi kaam nahi.\n\n"
+            f"Message: {message}\nJSON:"
+        )
+        try:
+            client = self._get_client()
+            resp = await asyncio.to_thread(lambda: client.chat.completions.create(
+                model=self._config.groq_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0, max_tokens=20))
+            txt = (resp.choices[0].message.content or "").lower()
+            return '"do"' in txt or "'do'" in txt or "intent: do" in txt or ": do" in txt
+        except Exception:
+            return False           # safe default: treat as answer (don't auto-act)
 
     def _run_vision(self, task: str) -> dict:
         """Blocking see→act loop (runs in a thread). Vision = Claude CLI only.
