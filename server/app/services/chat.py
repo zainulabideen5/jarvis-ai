@@ -460,7 +460,7 @@ class ChatService:
 
         # VISION control — if the user asks JARVIS to "dekh ke" / "screen se" /
         # "vision se" do something, run the see→act loop (works on ANY app/web).
-        if self._is_vision_request(user_message):
+        if self._is_vision_request(user_message) or self._is_action_task(user_message):
             from app.services.laptop_control.laptop_native import LaptopNative
             nat = LaptopNative.get()
             # remember where the user was (dashboard) so we can return after
@@ -1409,6 +1409,26 @@ class ChatService:
     def _is_vision_request(cls, message: str) -> bool:
         low = f" {message.strip().lower()} "
         return any(cue in low for cue in cls._VISION_CUES)
+
+    # ACTION/commerce/browse commands that mean "DO it on the screen/web" (open
+    # the browser/app, navigate, read, click) — NOT "answer me" (web-search).
+    # These route to VISION so JARVIS actually goes to the site + acts, instead
+    # of the conversational LLM searching and giving a generic reply.
+    _ACTION_CUES = (
+        "order kar", "order kr", "order karo", "order krdo", "order kardo",
+        "buy", "khareed", "kharid", "mangwa", "mangwao", "manga do",
+        "add to cart", "cart me", "cart mein", "cart m ", "checkout",
+        "website pe ja", "website par ja", "site pe ja", "site par ja",
+        "web pe ja", "site kholo", "website kholo", "open website", "open site",
+        "book kar", "booking kar", "apply kar", "form bhar", "fill kar",
+        "price bata", "price dekho", "prices bata", "rate bata", "qeemat bata",
+        "search kar ke", "dhund ke", "browse kar",
+    )
+
+    @classmethod
+    def _is_action_task(cls, message: str) -> bool:
+        low = f" {message.strip().lower()} "
+        return any(cue in low for cue in cls._ACTION_CUES)
 
     def _run_vision(self, task: str) -> dict:
         """Blocking see→act loop (runs in a thread). Vision = Claude CLI only.
