@@ -50,8 +50,16 @@ SIRF ek JSON object do, aur kuch nahi:
   {"action":"click_type_xy","x":X,"y":Y,"text":"...","why":""} -- (X,Y) pe click PHIR likho
   {"action":"type","text":"...","why":"short"}          -- abhi-focused box me likho
   {"action":"key","key":"enter","why":"short"}          -- key dabao (enter/tab/esc/ctrl+a)
+  {"action":"ask","question":"user se poochne wala sawal"} -- jab CHOICE/ambiguity ho
   {"action":"done","reply":"user ko jawab"}             -- task complete
   {"action":"fail","reply":"kyun nahi hua"}             -- nahi ho saka (honest)
+
+JAB SAMAJH NA AAYE / CHOICE HO:
+- Screen pe kai options hon (e.g. cheese burger, zinger burger) aur user ne
+  specify nahi kiya → GUESS MAT KARO. "ask" do: {"action":"ask","question":
+  "Kaunsa burger? Cheese ya Zinger?"} — user jawab dega, phir aage badhna.
+- Koi zaroori cheez missing ho (address, quantity, kaunsa contact agar kai
+  match karein) → bhi "ask" karo. Assistant ki tarah confirm karo, andaza nahi.
 
 MARKS vs PIXEL:
 - Agar element pe ek NUMBER (red mark) dikh raha hai → "click"/"click_type" with mark.
@@ -542,6 +550,12 @@ class VisionController:
                 return {"ok": True, "reply": action.get("reply", "Ho gaya."), "steps": step}
             if kind == "fail":
                 return {"ok": False, "reply": action.get("reply", "Nahi ho saka."), "steps": step}
+            if kind == "ask":
+                # Ambiguity / choice (e.g. cheese vs zinger) → ask the user back
+                # instead of guessing. chat parks the task + resumes with the answer.
+                return {"ok": False, "needs_input": True,
+                        "question": action.get("question", "Thodi aur detail chahiye, Boss."),
+                        "task": task, "steps": step}
 
             rec = self._record_action(action, marks, offset)
             result = self._execute(action, marks, offset)

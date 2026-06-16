@@ -162,6 +162,7 @@ class ChatService:
         # When the engine asks a clarifying question, we park its transcript
         # here; the user's next message resumes the task from that point.
         self._engine_session: dict | None = None
+        self._vision_session: dict | None = None   # paused vision task (asked a question)
 
     def _get_client(self) -> LLMClient:
         if self._client is None:
@@ -406,6 +407,36 @@ class ChatService:
                 "actions": actions_payload,
             }
 
+        # RESUME a paused VISION task — vision asked a clarifying question
+        # (e.g. "cheese ya zinger?"); this message is the answer → re-run the
+        # vision task with the clarification appended. (cancel/chodo abandons.)
+        if getattr(self, "_vision_session", None) is not None:
+            low = user_message.strip().lower()
+            if low in ("cancel", "chodo", "rehne do", "nahi", "no", "stop"):
+                self._vision_session = None
+                reply = "Theek hai Boss, woh task chhod diya."
+                await self._save_message("assistant", reply, "[]")
+                return {"reply": reply, "actions": []}
+            sess = self._vision_session
+            self._vision_session = None
+            from app.services.laptop_control.laptop_native import LaptopNative
+            origin = await asyncio.to_thread(LaptopNative.get().active_window_title)
+            task = f"{sess['task']}\n\n(User ka jawab/clarification: {user_message})"
+            res = await asyncio.to_thread(self._run_vision, task)
+            if res.get("needs_input"):          # asked again
+                self._vision_session = {"task": task}
+                q = res.get("question", "Aur detail chahiye, Boss.")
+                await self._save_message("assistant", f"🤔 {q}", "[]")
+                return {"reply": f"🤔 {q}", "actions": [], "awaiting_input": True}
+            await asyncio.to_thread(self._post_send_cleanup, origin)
+            reply = f"{'✅' if res.get('ok') else '⚠️'} {res.get('reply', res.get('msg', res.get('error','')))}"
+            await self._save_message("assistant", reply, "[]")
+            return {"reply": reply, "actions": [{
+                "action": "vision_task",
+                "status": "success" if res.get("ok") else "failed",
+                "message": res.get("reply", res.get("msg", "")),
+            }]}
+
         # RESUME a paused engine task — if the engine asked a clarifying
         # question last turn, this message is the answer. Continue from there.
         # (A clear "cancel"/"chodo" abandons the paused task.)
@@ -447,6 +478,15 @@ class ChatService:
                     res = None     # deterministic couldn't — fall to vision
             if res is None:
                 res = await asyncio.to_thread(self._run_vision, user_message)
+
+            # Vision asked a clarifying question (e.g. "cheese ya zinger?") —
+            # park the task and ask the user, like a real assistant. Resume on
+            # the next message (handled at the top of process_message).
+            if res.get("needs_input"):
+                self._vision_session = {"task": res.get("task", user_message)}
+                q = res.get("question", "Thodi aur detail chahiye, Boss.")
+                await self._save_message("assistant", f"🤔 {q}", "[]")
+                return {"reply": f"🤔 {q}", "actions": [], "awaiting_input": True}
 
             # cleanup: minimize the app + bring the dashboard back to front
             await asyncio.to_thread(self._post_send_cleanup, origin)
