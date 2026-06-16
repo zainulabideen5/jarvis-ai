@@ -1636,9 +1636,11 @@ class ChatService:
         import json as _json
         prompt = (
             "Tu samajhta hai ke user kisi ONLINE STORE se koi PRODUCT dhoondh/"
-            "khareed/price-pata karna chahta hai ya nahi. Agar HAAN, SIRF yeh JSON do:\n"
-            '{"store":"brand ya website (jaise outfitters, khaadi, ya poora URL)", '
-            '"query":"product jo dhoondhna hai (jaise black t-shirt, jeans)", '
+            "khareed/price-pata karna chahta hai ya nahi. Product KUCH BHI ho sakta "
+            "hai — kapra, electronics, gaari, bike, grocery, ya koi bhi cheez. "
+            "Agar HAAN, SIRF yeh JSON do:\n"
+            '{"store":"jo bhi shop/brand/website user ne kaha (koi bhi retailer ya poora URL)", '
+            '"query":"jo bhi cheez user dhoondh raha hai, uske apne lafzon mein", '
             '"want":"prices|order"}\n'
             "Agar yeh store-shopping ka request NAHI hai (aam baat, message bhejna, "
             "app kholna, sawal) to SIRF {} do. store ya query na ho to bhi {} do.\n\n"
