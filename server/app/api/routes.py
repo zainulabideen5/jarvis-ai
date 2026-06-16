@@ -1483,6 +1483,22 @@ async def environment_reach(app: str):
     return how_to_reach(app)
 
 
+@router.get("/location")
+async def location(refresh: bool = False):
+    """Best-known location: user-set area (precise) + IP city (auto). Used so
+    JARVIS orders from the NEARBY outlet (e.g. Karachi Defence, not Lahore)."""
+    import asyncio
+    from app.services.environment import get_location
+    return await asyncio.to_thread(get_location, refresh)
+
+
+@router.post("/location")
+async def location_set(body: dict):
+    """User sets precise area, e.g. {'location': 'Defence Phase 2, Karachi'}."""
+    from app.services.environment import set_user_location
+    return set_user_location(str((body or {}).get("location", "")))
+
+
 @router.post("/stop")
 async def stop_task():
     """STOP the currently running task — it halts at its next step. Works even

@@ -1411,8 +1411,19 @@ class ChatService:
         return any(cue in low for cue in cls._VISION_CUES)
 
     def _run_vision(self, task: str) -> dict:
-        """Blocking see→act loop (runs in a thread). Vision = Claude CLI only."""
+        """Blocking see→act loop (runs in a thread). Vision = Claude CLI only.
+        Injects the user's location so location-relevant tasks (food order,
+        nearby outlet) pick the RIGHT area (Karachi Defence, not Lahore)."""
         from app.services.laptop_control.vision_control import VisionController
+        try:
+            from app.services.environment import get_location
+            loc = get_location().get("best")
+            if loc:
+                task = (f"{task}\n\n(User abhi yahan hai: {loc}. Agar order/booking/"
+                        f"location-relevant ho to ISI area / nearby ka outlet chuno — "
+                        f"doosre sheher ka nahi.)")
+        except Exception:
+            pass
         return VisionController.get().run(task)
 
     def _post_send_cleanup(self, origin: str | None) -> None:

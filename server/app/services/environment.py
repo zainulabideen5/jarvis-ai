@@ -113,6 +113,68 @@ def detect_environment(refresh: bool = False) -> dict:
     return info
 
 
+_LOC_CACHE = Path(__file__).resolve().parents[2] / "data" / "location.json"
+
+
+def _read_loc() -> dict:
+    try:
+        return json.loads(_LOC_CACHE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _write_loc(d: dict) -> None:
+    try:
+        _LOC_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        _LOC_CACHE.write_text(json.dumps(d, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        log.warning("location_cache_write_failed", error=str(e)[:120])
+
+
+def detect_location_by_ip() -> dict | None:
+    """Approximate location from public IP (free, no key, no permission) —
+    CITY-level only (e.g. 'Karachi'), not the exact street."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen("http://ip-api.com/json/", timeout=5) as r:
+            d = json.loads(r.read().decode())
+        if d.get("status") == "success":
+            return {"city": d.get("city"), "region": d.get("regionName"),
+                    "country": d.get("country"), "lat": d.get("lat"),
+                    "lon": d.get("lon"), "source": "ip", "_ts": time.time()}
+    except Exception as e:
+        log.warning("ip_geolocation_failed", error=str(e)[:120])
+    return None
+
+
+def set_user_location(text: str) -> dict:
+    """User sets their precise area (e.g. 'Defence Phase 2, Karachi') — most
+    reliable; stored + preferred over IP for picking nearby outlets."""
+    loc = _read_loc()
+    loc["user_set"] = (text or "").strip()
+    loc["_ts"] = time.time()
+    _write_loc(loc)
+    log.info("user_location_set", area=loc["user_set"][:60])
+    return loc
+
+
+def get_location(refresh_ip: bool = False) -> dict:
+    """Best-known location: user-set area (precise) + IP city (auto). Order
+    logic should prefer `user_set` if present, else `ip`."""
+    loc = _read_loc()
+    if refresh_ip or "ip" not in loc or (time.time() - loc.get("ip", {}).get("_ts", 0) > 1800):
+        ip = detect_location_by_ip()
+        if ip:
+            loc["ip"] = ip
+            _write_loc(loc)
+    return {
+        "user_set": loc.get("user_set"),                 # precise, user-given
+        "ip": loc.get("ip"),                             # approx city (auto)
+        "best": loc.get("user_set") or (loc.get("ip", {}) or {}).get("city"),
+        "note": "user_set sabse pakka; IP sirf city-level. Nearby outlet ke liye 'best' use karo.",
+    }
+
+
 def how_to_reach(app: str) -> dict:
     """For a given app on the CURRENT platform, say how to reach it:
     PC → desktop app if installed (foreground) else web; phone → mobile app."""
