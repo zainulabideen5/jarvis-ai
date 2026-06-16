@@ -1736,42 +1736,76 @@ class ChatService:
         return {"reply": reply, "actions": [{"action": "open_product",
                 "status": "success", "url": url}]}
 
-    async def _compose_email(self, instruction: str) -> dict | None:
-        """User ke instruction se ek PROPER professional email likho. Returns
-        {is_email, to, subject, body} ya None agar email-send nahi hai."""
-        import json as _json
-        prompt = (
-            "User shayad ek EMAIL BHEJNA chahta hai (sirf email kholna/sawal nahi). "
-            "Agar yeh email-BHEJNE ka request hai to uske instruction se ek PROPER, "
-            "PROFESSIONAL email likho. SIRF yeh JSON do:\n"
-            '{"is_email": true, "to":"recipient email ya naam", '
-            '"subject":"saaf subject line", "body":"poora email body — greeting, '
-            'instruction ke mutabiq content, professional sign-off"}\n'
-            "Business email ke liye munasib professional tone (aam taur pe English). "
-            "ZAROORI: koi placeholder ya bracket [ ] (jaise [Your Name], [list tasks]) "
-            "BILKUL mat daalo — jo detail di gayi hai usi se clean, complete, "
-            "ready-to-send email likho; jo nahi maloom usko natural/generic tarike se "
-            "likh do ya chhod do, magar bracket kabhi nahi. "
-            "Sign-off mein app/service ka naam (Outlook, Gmail) ya koi banaya hua "
-            "naam mat daalo; sender ka asli naam na ho to sirf 'Best regards,' likh do. "
-            "Agar yeh email BHEJNE ka request NAHI hai (sirf app kholna, sawal, baat) "
-            'to: {"is_email": false}\n\n'
-            f"User: {instruction}\nJSON:"
-        )
+    def _email_llm(self, prompt: str) -> str:
+        """JSON-only LLM call for email compose. Claude (Opus) first — strong
+        judgment (reliably ASKS when unsure, saaf likhta hai) — Groq fallback.
+        Blocking; call via asyncio.to_thread."""
+        try:
+            from app.services.universal_engine.brain import ClaudeCLIBrain
+            brain = ClaudeCLIBrain(model="opus")
+            if brain.is_available():
+                txt = brain.think(
+                    "Tu ek JSON-only assistant hai. SIRF valid JSON do — aur kuch nahi.",
+                    [{"role": "user", "content": prompt}])
+                if txt and "{" in txt:
+                    return txt.strip()
+        except Exception as e:
+            log.warning("email_llm_cli_fallback", err=str(e)[:140])
         try:
             client = self._get_client()
-            resp = await asyncio.to_thread(
-                lambda: client.chat.completions.create(
-                    model=self._config.groq_model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.2, max_tokens=800,
-                )
-            )
-            txt = (resp.choices[0].message.content or "").strip()
-            obj = _json.loads(txt[txt.find("{"):txt.rfind("}") + 1])
-            return obj if obj.get("is_email") else None
+            resp = client.chat.completions.create(
+                model=self._config.groq_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0, max_tokens=800)
+            return (resp.choices[0].message.content or "").strip()
         except Exception as e:
-            log.warning("compose_email_failed", err=str(e)[:120])
+            log.warning("email_llm_groq_failed", err=str(e)[:140])
+            return ""
+
+    async def _compose_email(self, instruction: str, force: bool = False) -> dict | None:
+        """Instruction se ek PROPER professional email likho. force=True ka matlab
+        yeh email hai hi (clarification ke baad) — sirf likhna hai. Returns
+        {is_email,to,subject,body} ya {need_info,question} ya None."""
+        import json as _json
+        intro = ("Yeh EMAIL ZAROOR bhejni hai (pehle tay ho chuka). Neeche di gayi "
+                 "SAARI maloomat mila ke ek PROPER, COMPLETE, ready-to-send email likho."
+                 if force else
+                 "User shayad ek EMAIL BHEJNA chahta hai (sirf email kholna/sawal nahi). "
+                 "Agar email-BHEJNE ka request hai to ek PROPER professional email likho.")
+        prompt = (
+            f"{intro} SIRF yeh JSON do:\n"
+            '{"is_email": true, "to":"recipient email ya naam", '
+            '"subject":"saaf subject line", "body":"poora email body — greeting, '
+            'content, professional sign-off"}\n'
+            "Business email = munasib professional tone (aam taur pe English). "
+            "Koi placeholder/bracket [ ] BILKUL mat daalo. Body mein KABHI apni "
+            "reasoning ya excuse (jaise 'tasks not mentioned', 'I will give a general "
+            "statement') mat likho — content ya to email mein ho ya bilkul nahi. "
+            "Sign-off mein app ka naam (Outlook/Gmail) ya fake naam nahi; sender ka "
+            "naam na ho to sirf 'Best regards,'. Choti unknown (sender naam) natural "
+            "chhod do. LEKIN agar user ne specific cheezon ka HAWALA diya (yeh yeh / "
+            "woh / jo baat) par batayi NAHI, ya email ka content hi clear nahi → "
+            "draft HARGIZ MAT banao, Boss se SEEDHA SAAF sawal pucho ke EXACTLY kya "
+            "chahiye (meta baat 'kya main pooch sakta hoon' nahi):\n"
+            '{"need_info": true, "question":"<seedha chhota sawal — kya batana hai>"}\n'
+            + ("" if force else
+               'Agar email BHEJNE ka request hi NAHI (app kholna/sawal/baat) to: '
+               '{"is_email": false}\n')
+            + f"\nMaloomat:\n{instruction}\nJSON:"
+        )
+        txt = await asyncio.to_thread(self._email_llm, prompt)
+        if not txt:
+            return None
+        try:
+            obj = _json.loads(txt[txt.find("{"):txt.rfind("}") + 1])
+            if obj.get("need_info"):
+                return obj
+            if obj.get("is_email") or (force and obj.get("body")):
+                obj["is_email"] = True
+                return obj
+            return None
+        except Exception as e:
+            log.warning("compose_email_parse_failed", err=str(e)[:120])
             return None
 
     async def _try_email_send(self, message: str) -> dict | None:
@@ -1791,13 +1825,21 @@ class ChatService:
         if not draft:
             return None
         to = addr.group(0) if addr else (draft.get("to") or "").strip()
+        # GUESS nahi — agar detail missing hai to Boss se sawal pucho
+        if draft.get("need_info"):
+            q = draft.get("question") or "Boss, email ke liye thodi detail chahiye — kya likhun?"
+            self._email_session = {"stage": "gather", "instruction": message, "to": to}
+            await self._save_message("assistant", f"🤔 {q}", "[]")
+            return {"reply": f"🤔 {q}", "awaiting_input": True,
+                    "actions": [{"action": "email_clarify", "status": "awaiting_input"}]}
         if not to:
+            self._email_session = {"stage": "gather", "instruction": message, "to": ""}
             reply = "📧 Boss, kis ko email bhejni hai? Email address ya client ka naam batao."
             await self._save_message("assistant", reply, "[]")
             return {"reply": reply, "actions": [], "awaiting_input": True}
         subject = (draft.get("subject") or "(no subject)").strip()
         body = (draft.get("body") or "").strip()
-        self._email_session = {"to": to, "subject": subject, "body": body}
+        self._email_session = {"stage": "confirm", "to": to, "subject": subject, "body": body}
         reply = ("📧 Boss, yeh email tayyar hai — bhej dun? (Outlook se jayegi)\n\n"
                  f"**To:** {to}\n**Subject:** {subject}\n\n{body}\n\n"
                  "— 'haan / bhej do' likho to bhej deta hoon. Ya batao kya badalna hai.")
@@ -1818,6 +1860,35 @@ class ChatService:
             reply = "Theek hai Boss, email nahi bheji."
             await self._save_message("assistant", reply, "[]")
             return {"reply": reply, "actions": []}
+
+        # GATHER stage — humne sawal pucha tha, ab yeh uska jawab hai. Original
+        # instruction + Boss ka jawab milaa ke dobara compose karo.
+        if sess.get("stage") == "gather":
+            addr2 = _re.search(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", message)
+            to = sess.get("to") or (addr2.group(0) if addr2 else "")
+            combined = f"{sess.get('instruction','')}\n\nBoss ne yeh detail di: {message}"
+            new = await self._compose_email(combined, force=True)
+            if not new:
+                self._email_session = None
+                return None
+            to = to or (new.get("to") or "").strip()
+            if new.get("need_info") or not to:
+                q = (new.get("question") if new.get("need_info")
+                     else "Boss, kis email/naam ko bhejni hai?")
+                self._email_session = {"stage": "gather", "instruction": combined, "to": to}
+                await self._save_message("assistant", f"🤔 {q}", "[]")
+                return {"reply": f"🤔 {q}", "awaiting_input": True, "actions": []}
+            subject = (new.get("subject") or "(no subject)").strip()
+            body = (new.get("body") or "").strip()
+            self._email_session = {"stage": "confirm", "to": to,
+                                   "subject": subject, "body": body}
+            reply = ("📧 Boss, yeh email tayyar hai — bhej dun? (Outlook se jayegi)\n\n"
+                     f"**To:** {to}\n**Subject:** {subject}\n\n{body}\n\n"
+                     "— 'haan / bhej do' likho to bhej deta hoon. Ya batao kya badalna hai.")
+            await self._save_message("assistant", reply, "[]")
+            return {"reply": reply, "awaiting_input": True,
+                    "actions": [{"action": "email_draft", "status": "awaiting_confirm"}]}
+
         toks = set(_re.findall(r"[a-z]+", low))
         explicit_send = bool(_re.search(r"\b(bhej|bhejo|bhejdo|bhej\s*do|send)\b", low))
         pure_yes = (len(low.split()) <= 3 and bool(toks & {
@@ -1832,21 +1903,28 @@ class ChatService:
             await self._save_message("assistant", reply, "[]")
             return {"reply": reply, "actions": [{"action": "send_email",
                     "status": "success" if ok else "failed"}]}
-        # EDIT sirf tab jab message email ke baare mein lage; warna yeh ek NAYA
-        # unrelated command hai — draft chhod do aur normal routing pe jao
-        # (taake pending draft "outlook kholo" jaisi cheez hijack na kare).
-        edit_cues = ("subject", "body", "tone", "formal", "casual", "short", "chota",
-                     "bara", "bada", "greeting", "sign", "add", "likh", "badal",
-                     "badlo", "change", "edit", "email", "mail", "line", "point")
-        if not any(c in low for c in edit_cues):
+        # Saaf NAYA unrelated command (app/system/search/sawal)? → draft chhod ke
+        # normal routing (taake "outlook kholo" jaisi cheez hijack na ho).
+        if low.endswith("?") or _re.search(
+                r"\b(kholo|kholna|open|launch|search|google|youtube|whatsapp|teams|"
+                r"order|file|folder|screenshot|note|task)\b", low):
             self._email_session = None
             return None
+        # Warna: yeh email ki refinement ya extra content hai → dobara compose.
         new = await self._compose_email(
             f"Pichla email — Subject: {sess['subject']}\n{sess['body']}\n\n"
-            f"User ka badlav: {message}")
+            f"User ka badlav/extra detail: {message}", force=True)
+        if new and new.get("need_info"):
+            q = new.get("question") or "Boss, thodi aur detail batao?"
+            self._email_session = {"stage": "gather", "to": sess["to"],
+                                   "instruction": f"Subject: {sess['subject']}\n"
+                                                  f"{sess['body']}\n\nExtra: {message}"}
+            await self._save_message("assistant", f"🤔 {q}", "[]")
+            return {"reply": f"🤔 {q}", "awaiting_input": True, "actions": []}
         if new:
             sess["subject"] = (new.get("subject") or sess["subject"]).strip()
             sess["body"] = (new.get("body") or sess["body"]).strip()
+            sess["stage"] = "confirm"
             self._email_session = sess
             reply = ("📧 Update kar diya, Boss:\n\n"
                      f"**To:** {sess['to']}\n**Subject:** {sess['subject']}\n\n"
