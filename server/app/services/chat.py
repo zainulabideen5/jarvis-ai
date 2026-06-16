@@ -1815,14 +1815,25 @@ class ChatService:
         import re as _re
         low = message.lower()
         addr = _re.search(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", message)
-        # cheap gate: bina email-cue ke LLM call mat karo
-        if not (addr or _re.search(r"\b(e[\s-]?mail|gmail|outlook|mail)\b", low)):
-            return None
-        # email kholne/sawal ko send mat samjho — sirf send-cue ho to aage badho
-        if not _re.search(r"\b(bhej|bhejo|bhejna|bhajo|send|likh|likho|likhna|draft|reply|forward)\b", low):
+        # "email/gmail" word (outlook NAHI — woh kholne ke liye bhi hota hai)
+        email_word = bool(_re.search(r"\b(e[\s-]?mail|gmail)\b", low))
+        send_cue = bool(_re.search(
+            r"\b(bhej|bhejo|bhejna|bhajo|send|likh|likho|likhna|draft|reply|forward|"
+            r"karo|kardo|kar\s*do|kr\s*do|krna)\b", low))
+        # email-send intent: @address + (email-word ya send-action) YA email-word + send-action
+        definitely = bool(addr) and (email_word or send_cue)
+        if not (definitely or (email_word and send_cue)):
             return None
         draft = await self._compose_email(message)
         if not draft:
+            # @address tha → yeh pakka email-send hai; vision pe MAT phenko, pucho
+            if addr:
+                self._email_session = {"stage": "gather", "instruction": message,
+                                       "to": addr.group(0)}
+                reply = (f"📧 Boss, {addr.group(0)} ko kya bhejun? Subject/baat batao "
+                         "to email bana ke confirm ke liye dikha dunga.")
+                await self._save_message("assistant", reply, "[]")
+                return {"reply": reply, "awaiting_input": True, "actions": []}
             return None
         to = addr.group(0) if addr else (draft.get("to") or "").strip()
         # GUESS nahi — agar detail missing hai to Boss se sawal pucho
@@ -1861,6 +1872,15 @@ class ChatService:
             await self._save_message("assistant", reply, "[]")
             return {"reply": reply, "actions": []}
 
+        # CONFIRM stage mein agar NAYA email command (alag recipient) aaye to
+        # purana draft chhod ke fresh start (taake purana atka na rahe).
+        if sess.get("stage") != "gather":
+            na = _re.search(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", message)
+            if (na and na.group(0).lower() != (sess.get("to") or "").lower()
+                    and _re.search(r"\b(e[\s-]?mail|gmail|mail|bhej|send|karo)\b", low)):
+                self._email_session = None
+                return None        # _try_email_send naya email start karega
+
         # GATHER stage — humne sawal pucha tha, ab yeh uska jawab hai. Original
         # instruction + Boss ka jawab milaa ke dobara compose karo.
         if sess.get("stage") == "gather":
@@ -1869,8 +1889,11 @@ class ChatService:
             combined = f"{sess.get('instruction','')}\n\nBoss ne yeh detail di: {message}"
             new = await self._compose_email(combined, force=True)
             if not new:
-                self._email_session = None
-                return None
+                # compose fail — vision pe MAT phenko, dobara saaf pucho
+                reply = ("📧 Boss, theek se samajh nahi paaya — email mein EXACTLY kya "
+                         "likhun? Subject + main baat saaf batao.")
+                await self._save_message("assistant", reply, "[]")
+                return {"reply": reply, "awaiting_input": True, "actions": []}
             to = to or (new.get("to") or "").strip()
             if new.get("need_info") or not to:
                 q = (new.get("question") if new.get("need_info")
