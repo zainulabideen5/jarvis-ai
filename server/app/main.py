@@ -58,6 +58,14 @@ async def lifespan(app: FastAPI):
     from app.services.universal_engine.recipes import RecipeStore
     RecipeStore.ensure_table()
 
+    # Detect + cache the runtime environment (PC/laptop, OS, apps) so JARVIS
+    # adapts per platform (PC → web/desktop, phone → app). Self-adaptive.
+    try:
+        from app.services.environment import detect_environment
+        detect_environment(refresh=True)
+    except Exception as e:
+        log.warning("environment_detect_failed", error=str(e))
+
     # Start background processor
     processor = ChunkProcessor(config)
     processor_task = asyncio.create_task(processor.run())

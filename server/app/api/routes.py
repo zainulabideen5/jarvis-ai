@@ -1468,6 +1468,21 @@ async def vision_do(body: VisionDo):
         return {"ok": False, "error": str(e)}
 
 
+@router.get("/environment")
+async def environment(refresh: bool = False):
+    """What environment is JARVIS on? (PC/laptop vs phone, OS, installed apps,
+    browsers) — so it adapts: PC → web/desktop, phone → app."""
+    from app.services.environment import detect_environment
+    return detect_environment(refresh=refresh)
+
+
+@router.get("/environment/reach/{app}")
+async def environment_reach(app: str):
+    """For a given app, how should JARVIS reach it on this platform?"""
+    from app.services.environment import how_to_reach
+    return how_to_reach(app)
+
+
 @router.post("/stop")
 async def stop_task():
     """STOP the currently running task — it halts at its next step. Works even
