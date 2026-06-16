@@ -1492,9 +1492,14 @@ class ChatService:
             "User ke message ka intent batao. SIRF ek JSON:\n"
             '{"intent":"do"}   = computer/web pe KAAM karna hai (app ya website '
             "kholo, order/buy/cart, kisi cheez ka price site se nikalo, click/fill/"
-            "navigate, message/file bhejo, app control). Yani screen pe kuch karna.\n"
-            '{"intent":"answer"} = sirf sawal/baat/maloomat — jiska jawab chat me '
-            "likhna hai, computer pe koi kaam nahi.\n\n"
+            "navigate, message/file bhejo, app control). Yani screen pe kuch karna. "
+            "ISME YEH BHI AATA HAI: agar jawab ke liye user ke APNE kisi web account/"
+            "dashboard/site ko KHOL ke PADHNA pade — jaise Stripe payout/transactions, "
+            "bank balance, order/shipment status, email inbox, analytics, ya koi bhi "
+            "logged-in/private live data — to woh bhi \"do\" hai. JARVIS ja ke browser "
+            "se padhega, 'main access nahi kar sakta' bol ke REFUSE nahi karega.\n"
+            '{"intent":"answer"} = aam maloomat/general knowledge/baat-cheet jiska '
+            "jawab model khud jaanta hai — koi private account ya screen check nahi.\n\n"
             f"Message: {message}\nJSON:"
         )
         try:
