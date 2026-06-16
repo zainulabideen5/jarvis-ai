@@ -540,13 +540,13 @@ class LaptopNative:
             if window is None:
                 return {"ok": False, "error": "window nahi mili"}
             import re as _re
-            # TARGETED lookup (child_window) — NOT a full descendants() scan,
-            # which on WhatsApp's huge WebView tree took seconds (the slowness).
+            needle = (element_name or "").lower()
+            # 1) FAST targeted child_window (Edit + Document)
             for ct in ("Edit", "Document"):
                 try:
                     cand = window.child_window(
                         title_re=f".*{_re.escape(element_name)}.*", control_type=ct)
-                    if cand.exists(timeout=0.5):
+                    if cand.exists(timeout=0.4):
                         try:
                             val = cand.get_value() or ""
                         except Exception:
@@ -554,17 +554,25 @@ class LaptopNative:
                         return {"ok": True, "value": str(val), "name": element_name}
                 except Exception:
                     continue
-            # Fallback: time-boxed descendants scan (correctness without the
-            # full-tree slowness — so verify doesn't false-fail → no re-send).
-            needle = (element_name or "").lower()
-            deadline = time.monotonic() + 1.5
+            # 2) RELIABLE fallback — time-boxed FULL descendants scan (Edit AND
+            #    Document AND Text; loose name match). The earlier Edit-only scan
+            #    missed WhatsApp's compose → false "not sent". Bounded to ~2.5s.
+            deadline = time.monotonic() + 2.5
             try:
-                for e in window.descendants(control_type="Edit"):
+                for e in window.descendants():
                     if time.monotonic() > deadline:
                         break
                     try:
-                        if needle in (e.element_info.name or "").lower():
-                            return {"ok": True, "value": str(e.get_value() or ""), "name": element_name}
+                        info = e.element_info
+                        if (info.control_type or "") not in ("Edit", "Document", "Text"):
+                            continue
+                        nm = (info.name or "").lower()
+                        if needle and (needle in nm or "type a" in nm or "message" in nm):
+                            try:
+                                val = e.get_value() or ""
+                            except Exception:
+                                val = ""
+                            return {"ok": True, "value": str(val), "name": info.name or ""}
                     except Exception:
                         continue
             except Exception:
@@ -871,17 +879,25 @@ class LaptopNative:
             pag.press("enter")
             time.sleep(0.45)
 
-            # verify: the compose box should now be EMPTY (message left)
+            # verify the compose box CLEARED. 3 outcomes: cleared = SENT; still
+            # has text = NOT sent; can't read the box at all = LIKELY sent (we
+            # typed + pressed Enter) → don't FALSE-FAIL (that confused you:
+            # "message gaya par fail bola").
             needle = message.strip().lower()
-            for _ in range(2):
+            could_read = False
+            for _ in range(3):
                 val = self.get_element_value(win, cfg["compose"][0])
                 if val.get("ok"):
+                    could_read = True
                     cur = (val.get("value") or "").strip().lower()
                     if needle not in cur:      # box cleared → it sent
                         return {"ok": True, "verified": True,
-                                "msg": f"'{message}' {contact} ko bhej diya"
-                                       + (" (off-screen — dikhi bhi nahi)" if off_screen else "")}
-                time.sleep(0.3)
+                                "msg": f"'{message}' {contact} ko bhej diya"}
+                time.sleep(0.4)
+            if not could_read:
+                # never read the compose → message MOST LIKELY went (typed+Enter)
+                return {"ok": True, "verified": False,
+                        "msg": f"'{message}' {contact} ko bhej diya (verify nahi kar paya — ek nazar confirm kar lena)"}
             return {"ok": False, "verified": False,
                     "msg": f"'{message}' type to kiya par compose box clear nahi hua — ho sakta hai na gaya ho, zara khud dekh lein"}
         finally:
