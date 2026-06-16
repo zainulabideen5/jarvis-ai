@@ -1859,19 +1859,42 @@ class ChatService:
         subject = (draft.get("subject") or "(no subject)").strip()
         body = (draft.get("body") or "").strip()
         frm = (draft.get("from_account") or "").strip()
+        res = await asyncio.to_thread(self._resolve_from_account, frm)
         self._email_session = {"stage": "confirm", "to": to, "subject": subject,
-                               "body": body, "from_account": frm}
-        reply = self._email_confirm_text(to, subject, body, frm)
+                               "body": body, "from_account": res["send"]}
+        reply = self._email_confirm_text(to, subject, body, res["display"])
         await self._save_message("assistant", reply, "[]")
         return {"reply": reply, "awaiting_input": True,
                 "actions": [{"action": "email_draft", "status": "awaiting_confirm"}]}
 
     @staticmethod
-    def _email_confirm_text(to: str, subject: str, body: str, frm: str = "") -> str:
-        head = "📧 Boss, yeh email tayyar hai — bhej dun?"
-        head += f" (From: {frm})\n\n" if frm else " (Outlook se jayegi)\n\n"
-        return (head + f"**To:** {to}\n**Subject:** {subject}\n\n{body}\n\n"
+    def _email_confirm_text(to: str, subject: str, body: str, frm_display: str = "") -> str:
+        lines = ["📧 Boss, yeh email tayyar hai — bhej dun?\n"]
+        lines.append(f"**From:** {frm_display or 'default Outlook account'}")
+        lines.append(f"**To:** {to}")
+        lines.append(f"**Subject:** {subject}")
+        return ("\n".join(lines) + f"\n\n{body}\n\n"
                 "— 'haan / bhej do' likho to bhej deta hoon. Ya batao kya badalna hai.")
+
+    def _resolve_from_account(self, frm: str) -> dict:
+        """User ke bataye account ko asli Outlook account se match karo, taake
+        confirm mein POORA account (jisse jayegi) dikhe. Returns {display, send}."""
+        try:
+            from app.services.laptop_control.office_com import OfficeCOM
+            accs = OfficeCOM.get().outlook_list_accounts().get("accounts", [])
+        except Exception:
+            accs = []
+        smtps = [a.get("smtp", "") for a in accs if a.get("smtp")]
+        if frm:
+            needle = frm.strip().lower()
+            for s in smtps:
+                if needle in s.lower() or s.lower() in needle:
+                    return {"display": s, "send": s}          # matched real account
+            return {"display": f"{frm} ⚠️ (Outlook mein yeh account abhi nahi mila — "
+                    f"default se jayegi; login kar lo to isi se jayegi)", "send": frm}
+        if smtps:
+            return {"display": f"{smtps[0]} (default)", "send": ""}
+        return {"display": "default Outlook account", "send": ""}
 
     async def _resume_email_session(self, message: str) -> dict | None:
         """Draft confirm/cancel/edit handle karo."""
@@ -1919,9 +1942,10 @@ class ChatService:
             subject = (new.get("subject") or "(no subject)").strip()
             body = (new.get("body") or "").strip()
             frm = (new.get("from_account") or sess.get("from_account") or "").strip()
+            res = await asyncio.to_thread(self._resolve_from_account, frm)
             self._email_session = {"stage": "confirm", "to": to, "subject": subject,
-                                   "body": body, "from_account": frm}
-            reply = self._email_confirm_text(to, subject, body, frm)
+                                   "body": body, "from_account": res["send"]}
+            reply = self._email_confirm_text(to, subject, body, res["display"])
             await self._save_message("assistant", reply, "[]")
             return {"reply": reply, "awaiting_input": True,
                     "actions": [{"action": "email_draft", "status": "awaiting_confirm"}]}
