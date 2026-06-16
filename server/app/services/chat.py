@@ -1780,6 +1780,9 @@ class ChatService:
         prompt = (
             f"{intro} SIRF yeh JSON do:\n"
             '{"is_email": true, "to":"recipient email ya naam", '
+            '"from_account":"agar user ne bataya KIS account/email SE bhejna hai '
+            "(jaise 'davina se', 'X account se', ya koi email) to wohi likho, warna "
+            'khali", '
             '"subject":"saaf subject line", "body":"poora email body — greeting, '
             'content, professional sign-off"}\n'
             "Business email = munasib professional tone (aam taur pe English). "
@@ -1855,13 +1858,20 @@ class ChatService:
             return {"reply": reply, "actions": [], "awaiting_input": True}
         subject = (draft.get("subject") or "(no subject)").strip()
         body = (draft.get("body") or "").strip()
-        self._email_session = {"stage": "confirm", "to": to, "subject": subject, "body": body}
-        reply = ("📧 Boss, yeh email tayyar hai — bhej dun? (Outlook se jayegi)\n\n"
-                 f"**To:** {to}\n**Subject:** {subject}\n\n{body}\n\n"
-                 "— 'haan / bhej do' likho to bhej deta hoon. Ya batao kya badalna hai.")
+        frm = (draft.get("from_account") or "").strip()
+        self._email_session = {"stage": "confirm", "to": to, "subject": subject,
+                               "body": body, "from_account": frm}
+        reply = self._email_confirm_text(to, subject, body, frm)
         await self._save_message("assistant", reply, "[]")
         return {"reply": reply, "awaiting_input": True,
                 "actions": [{"action": "email_draft", "status": "awaiting_confirm"}]}
+
+    @staticmethod
+    def _email_confirm_text(to: str, subject: str, body: str, frm: str = "") -> str:
+        head = "📧 Boss, yeh email tayyar hai — bhej dun?"
+        head += f" (From: {frm})\n\n" if frm else " (Outlook se jayegi)\n\n"
+        return (head + f"**To:** {to}\n**Subject:** {subject}\n\n{body}\n\n"
+                "— 'haan / bhej do' likho to bhej deta hoon. Ya batao kya badalna hai.")
 
     async def _resume_email_session(self, message: str) -> dict | None:
         """Draft confirm/cancel/edit handle karo."""
@@ -1908,11 +1918,10 @@ class ChatService:
                 return {"reply": f"🤔 {q}", "awaiting_input": True, "actions": []}
             subject = (new.get("subject") or "(no subject)").strip()
             body = (new.get("body") or "").strip()
-            self._email_session = {"stage": "confirm", "to": to,
-                                   "subject": subject, "body": body}
-            reply = ("📧 Boss, yeh email tayyar hai — bhej dun? (Outlook se jayegi)\n\n"
-                     f"**To:** {to}\n**Subject:** {subject}\n\n{body}\n\n"
-                     "— 'haan / bhej do' likho to bhej deta hoon. Ya batao kya badalna hai.")
+            frm = (new.get("from_account") or sess.get("from_account") or "").strip()
+            self._email_session = {"stage": "confirm", "to": to, "subject": subject,
+                                   "body": body, "from_account": frm}
+            reply = self._email_confirm_text(to, subject, body, frm)
             await self._save_message("assistant", reply, "[]")
             return {"reply": reply, "awaiting_input": True,
                     "actions": [{"action": "email_draft", "status": "awaiting_confirm"}]}
@@ -1925,7 +1934,8 @@ class ChatService:
         if explicit_send or pure_yes:
             from app.services.laptop_control.email_sender import EmailSender
             ok, msg = await asyncio.to_thread(
-                EmailSender.send, sess["to"], sess["subject"], sess["body"])
+                EmailSender.send, sess["to"], sess["subject"], sess["body"],
+                None, None, None, sess.get("from_account", ""))
             self._email_session = None
             reply = f"{'✅' if ok else '⚠️'} {msg}"
             await self._save_message("assistant", reply, "[]")

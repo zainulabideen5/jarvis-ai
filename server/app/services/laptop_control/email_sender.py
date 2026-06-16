@@ -50,6 +50,7 @@ class EmailSender:
         attachments: object | None = None,
         from_addr: str | None = None,
         password: str | None = None,
+        from_account: str = "",
     ) -> tuple[bool, str]:
         """Send an email.
 
@@ -98,9 +99,15 @@ class EmailSender:
                     subject=subject,
                     body=body,
                     attachments=att_list,
+                    from_account=from_account or "",
                 )
                 if r_oc.get("ok"):
-                    return True, f"Email bhej diya {', '.join(oc_emails)} ko (via Outlook desktop)"
+                    via = r_oc.get("from_account")
+                    src = f" ({via} se)" if via else " (via Outlook desktop)"
+                    note = ""
+                    if r_oc.get("from_warning"):
+                        note = f" — note: {r_oc['from_warning']}"
+                    return True, f"Email bhej diya {', '.join(oc_emails)} ko{src}{note}"
                 log.info("outlook_com_failed_fallback", error=r_oc.get("error", ""))
         except Exception as e:
             log.info("outlook_com_init_fallback", error=str(e)[:200])
