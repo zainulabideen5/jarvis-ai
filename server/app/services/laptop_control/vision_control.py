@@ -113,7 +113,8 @@ class VisionController:
                     off = (left, top)
             except Exception:
                 pass
-        path = os.path.join(tempfile.gettempdir(), "jarvis_vision.png")
+        import uuid
+        path = os.path.join(tempfile.gettempdir(), f"jarvis_vision_{uuid.uuid4().hex[:8]}.png")
         img.save(path)
         return path, off
 
@@ -177,7 +178,9 @@ class VisionController:
             tw, th = 9 * len(tag) + 6, 16
             d.rectangle((box[0], box[1], box[0] + tw, box[1] + th), fill=(255, 0, 0))
             d.text((box[0] + 3, box[1] + 1), tag, fill=(255, 255, 255))
-        out = os.path.join(tempfile.gettempdir(), "jarvis_vision_marked.png")
+        # derive a unique marked-path from the (already-unique) source path so
+        # overlapping runs don't clobber each other's screenshots
+        out = img_path[:-4] + "_marked.png" if img_path.endswith(".png") else img_path + "_marked.png"
         img.save(out)
         return out
 

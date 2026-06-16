@@ -707,8 +707,9 @@ def _get_meeting():
 
 
 @router.post("/meeting/start")
-async def start_meeting(body: dict = {}):
+async def start_meeting(body: dict | None = None):
     """Start a meeting — turns on listening + tracking."""
+    body = body or {}
     service = _get_meeting()
     return await service.start_meeting(body.get("title", ""))
 

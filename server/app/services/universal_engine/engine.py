@@ -557,6 +557,15 @@ class UniversalEngine:
                     # the contact name. If it doesn't match the recipient from
                     # the task, it likely went to the WRONG chat.
                     recipient = _extract_recipient(task)
+                    if not recipient and transcript:
+                        # RESUME path: `task` is the user's clarifying answer, not
+                        # the original command — pull the recipient from the
+                        # original command in the transcript so the guard still runs.
+                        for _m in transcript:
+                            _r = _extract_recipient(str(_m.get("content", "")))
+                            if _r:
+                                recipient = _r
+                                break
                     if recipient and not await self._bounded(
                         _active_chat_is, recipient, timeout=10, default=True):
                         log.warning("engine_wrong_recipient", recipient=recipient)

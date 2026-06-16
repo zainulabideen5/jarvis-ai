@@ -389,6 +389,11 @@ class ChatService:
             await self._save_message("assistant", reply, "[]")
             return {"reply": reply, "actions": []}
 
+        # A new (non-stop) task is starting → clear any stale STOP flag so a
+        # leftover stop from a previous task can't abort this one before it runs.
+        from app.services.task_control import clear_stop
+        clear_stop()
+
         # If verification flow active, route through it (typed commands)
         verification_result = await self._try_verification(user_message)
         if verification_result is not None:
@@ -589,10 +594,17 @@ class ChatService:
                     clean_reply_parts.append(rest)
                     try:
                         action = json.loads(action_json.strip())
+                    except json.JSONDecodeError as e:
+                        log.warning("chat_action_bad_json", error=str(e))
+                        continue
+                    try:
                         executed = await self._execute_action(action)
                         actions.append(executed)
-                    except (json.JSONDecodeError, Exception) as e:
+                    except Exception as e:
+                        # Don't silently swallow a real action failure — surface it.
                         log.warning("chat_action_failed", error=str(e))
+                        actions.append({"status": "failed",
+                                        "message": f"Action fail: {str(e)[:100]}"})
 
                 reply = "".join(clean_reply_parts).strip()
 
