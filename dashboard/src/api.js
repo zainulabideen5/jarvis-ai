@@ -134,6 +134,10 @@ export const api = {
   engineProgress: () => fetchJSON('/engine/progress'),
   // STOP a running task — halts the engine/vision loop at its next step.
   stopTask: () => postJSON('/stop', {}),
+  // Away / Take-Over mode (AV-safe background control)
+  awayStatus: () => fetchJSON('/away/status'),
+  takeover: (durationSec = 600) => postJSON('/takeover', { duration_sec: durationSec }),
+  releaseTakeover: () => postJSON('/takeover/release', {}),
 
   // Office COM check
   officeCheck: () => fetchJSON('/office/check'),

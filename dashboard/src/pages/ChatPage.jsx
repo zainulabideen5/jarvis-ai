@@ -9,6 +9,9 @@ export default function ChatPage() {
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [jarvisListening, setJarvisListening] = useState(false);
   const [activeMeeting, setActiveMeeting] = useState(null);
+  // Away / Take-Over: when ON, bot may use the session fully (background work)
+  const [botControl, setBotControl] = useState(false);
+  const [userAway, setUserAway] = useState(false);
   // Files the user attached but hasn't sent yet. Each entry is
   // { file: File, status: 'pending'|'uploading'|'uploaded'|'failed', path?, error? }
   const [attachments, setAttachments] = useState([]);
@@ -218,6 +221,32 @@ export default function ChatPage() {
     }
   };
 
+  // Poll away/take-over status for the badge
+  useEffect(() => {
+    const tick = () => api.awayStatus()
+      .then((s) => { setBotControl(!!s.takeover_active); setUserAway(!!s.user_away); })
+      .catch(() => {});
+    tick();
+    const id = setInterval(tick, 4000);
+    return () => clearInterval(id);
+  }, []);
+
+  const handleTakeover = async () => {
+    try {
+      if (botControl) {
+        await api.releaseTakeover();
+        setBotControl(false);
+        setMessages((prev) => [...prev, { role: 'assistant', content: '✋ Control wapas aap ke paas — bot ruk gaya.' }]);
+      } else {
+        await api.takeover(600);
+        setBotControl(true);
+        setMessages((prev) => [...prev, { role: 'assistant', content: '🤖 Bot ne control le liya (10 min) — ab away/background mein kaam karega. Mouse hilao to turant ruk jayega.' }]);
+      }
+    } catch (err) {
+      setMessages((prev) => [...prev, { role: 'assistant', content: `Take-over error: ${err.message}` }]);
+    }
+  };
+
   const handleStop = async () => {
     try {
       await api.stopTask();
@@ -361,6 +390,22 @@ export default function ChatPage() {
             }
           >
             {jarvisListening ? '⏸ Stop Listening' : '🎤 Start Listening'}
+          </button>
+          <button
+            onClick={handleTakeover}
+            title="Bot ko poora laptop de do (away/background kaam). Mouse hilao to ruk jayega."
+            className="px-5 py-2.5 rounded font-display uppercase tracking-widest text-xs font-bold transition-all"
+            style={
+              botControl
+                ? { background: 'linear-gradient(135deg, #f59e0b, #b45309)', color: '#1a1000',
+                    border: '1px solid #fbbf24', boxShadow: '0 0 18px rgba(245, 158, 11, 0.6)',
+                    animation: 'jPulse 1.5s ease-in-out infinite' }
+                : { background: 'linear-gradient(135deg, #6366f1, #4338ca)', color: '#fff',
+                    border: '1px solid #818cf8', boxShadow: '0 0 18px rgba(99, 102, 241, 0.5)' }
+            }
+          >
+            {botControl ? '🤖 Bot in Control — Release' : '🤖 Take Over'}
+            {!botControl && userAway ? ' • away' : ''}
           </button>
         </div>
       </div>
