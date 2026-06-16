@@ -500,15 +500,6 @@ class UniversalEngine:
                 log.info("engine_stopped_by_user", step=step_no)
                 _set_progress(False, "", step_no)
                 return {"ok": False, "reply": "🛑 Boss, rok diya — aapne stop bola.", "steps": steps}
-            # AUTO-RELEASE — if the bot is running in Take-Over (away) mode and
-            # the REAL user comes back (real mouse/keyboard, not the bot's own),
-            # release control instantly so the bot never fights the user.
-            from app.services import away_mode
-            if away_mode.takeover_active() and away_mode.user_returned():
-                away_mode.release_takeover()
-                log.info("engine_released_user_returned", step=step_no)
-                _set_progress(False, "", step_no)
-                return {"ok": False, "reply": "✋ Aap wapas aa gaye — bot ne control chhod diya. ('Take Over' dobara dabao to continue.)", "steps": steps}
             raw = None
             last_err: BrainError | None = None
             # Show "thinking" so the UI doesn't look frozen during the (slow,

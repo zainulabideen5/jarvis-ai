@@ -127,16 +127,6 @@ class LaptopNative:
         except Exception as e:
             return {"ok": False, "error": str(e)[:200]}
 
-    @staticmethod
-    def _mark_bot_input(seconds: float = 0.6) -> None:
-        """Tell the away-mode hook 'the BOT is about to send input now' so the
-        bot's own clicks/keystrokes aren't mistaken for the user returning."""
-        try:
-            from app.services import away_mode
-            away_mode.mark_bot_acting(seconds)
-        except Exception:
-            pass
-
     def paste_text(self, text: str, clear_first: bool = True) -> dict:
         """Type INSTANTLY by setting the clipboard and pressing Ctrl+V.
 
@@ -155,7 +145,6 @@ class LaptopNative:
                 win32clipboard.CloseClipboard()
             pag = _get_pyautogui()
             time.sleep(0.05)
-            self._mark_bot_input(1.0)   # bot input window (covers Ctrl+A/V + Enter after)
             if clear_first:
                 pag.hotkey("ctrl", "a")   # select existing → paste replaces it
                 time.sleep(0.05)
@@ -513,7 +502,6 @@ class LaptopNative:
             label = target.window_text() or element_name
             # REAL click first — reliably triggers WebView controls.
             try:
-                self._mark_bot_input(0.6)
                 target.click_input()
                 return {"ok": True, "invoked": label, "via": "click"}
             except Exception:

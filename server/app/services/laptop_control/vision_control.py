@@ -249,11 +249,6 @@ class VisionController:
 
     def _execute(self, action: dict, marks: list[dict], offset: tuple[int, int]) -> str:
         from app.services.laptop_control.laptop_native import LaptopNative, _get_pyautogui
-        try:
-            from app.services import away_mode
-            away_mode.mark_bot_acting(0.9)   # this is the bot acting, not the user
-        except Exception:
-            pass
         nat = LaptopNative.get()
         pag = _get_pyautogui()
         kind = (action.get("action") or "").lower()
@@ -382,11 +377,6 @@ class VisionController:
         return None
 
     def _replay_exec(self, a, pag, nat):
-        try:
-            from app.services import away_mode
-            away_mode.mark_bot_acting(0.9)
-        except Exception:
-            pass
         if a["kind"] == "click":
             pag.click(a["x"], a["y"]); time.sleep(0.4)
             if a.get("text"):
@@ -523,12 +513,6 @@ class VisionController:
             if is_stopped():
                 log.info("vision_stopped_by_user", step=step)
                 return {"ok": False, "reply": "🛑 Boss, rok diya — aapne stop bola.", "steps": step}
-            # auto-release if user returns during a Take-Over (away) task
-            from app.services import away_mode
-            if away_mode.takeover_active() and away_mode.user_returned():
-                away_mode.release_takeover()
-                log.info("vision_released_user_returned", step=step)
-                return {"ok": False, "reply": "✋ Aap wapas aa gaye — bot ne control chhod diya.", "steps": step}
             window = self._foreground_window()
             shot, offset = self._capture(window)
             marks = self._enumerate(window)

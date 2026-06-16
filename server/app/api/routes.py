@@ -1468,36 +1468,6 @@ async def vision_do(body: VisionDo):
         return {"ok": False, "error": str(e)}
 
 
-@router.get("/away/status")
-async def away_status():
-    """Is the user away/idle? Is take-over active? (for the dashboard badge)"""
-    from app.services import away_mode
-    return {
-        "idle_seconds": round(away_mode.idle_seconds(), 1),
-        "user_away": away_mode.is_user_away(),
-        "takeover_active": away_mode.takeover_active(),
-        "bot_may_control": away_mode.should_bot_control(),
-    }
-
-
-@router.post("/takeover")
-async def takeover(body: dict | None = None):
-    """User hands the machine to the bot — it may use the single session fully
-    for a while (background SEND becomes possible since the user stepped away)."""
-    from app.services import away_mode
-    body = body or {}
-    away_mode.request_takeover(int(body.get("duration_sec", 600)))
-    return {"ok": True, "takeover_active": True, "msg": "Bot ne control le liya — ab background mein kaam karega"}
-
-
-@router.post("/takeover/release")
-async def takeover_release():
-    """Give control back to the user."""
-    from app.services import away_mode
-    away_mode.release_takeover()
-    return {"ok": True, "takeover_active": False, "msg": "Control wapas tumhare paas"}
-
-
 @router.post("/stop")
 async def stop_task():
     """STOP the currently running task — it halts at its next step. Works even
