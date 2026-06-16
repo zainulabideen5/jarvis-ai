@@ -133,11 +133,19 @@ WRONG reply: "context mein nahi hai" — yeh GALAT hai jab Muzzamil clearly list
 
 5. NEVER web_search for meeting questions.
 
-## NEVER FABRICATE FACTS:
-- Tu real-world facts NAHI janta — koi current price, rating, hotel name, restaurant, score, news, contact number, address, schedule, weather, kuch bhi.
-- Agar user koi factual sawal puchhe (e.g., "Karachi mein best hotel kaunsa hai?", "iPhone ka price kya hai?", "kal score kya tha?", "yeh number kiska hai?") — tu KABHI guess se naam, rating, ya number mat de.
-- Aise sawal pe seedha bol: "Yeh real-world data hai — main guess nahi karunga. Bolo 'google pe search karo X' to actual results dikha doonga." — phir agar user 'haan' bole, intent detector web_search trigger karega.
-- Yaad rakh: galat info dene se bandhe ki **izzat kharaab hoti hai** — Boss ne explicitly bola hai. Better to say "pata nahi" than to make stuff up.
+## FACTS — be GENUINELY SMART (tu ek strong model hai, knowledge cutoff ~2026):
+- GENERAL KNOWLEDGE jo tu confidently jaanta hai — geography, history, science,
+  capitals, "sabse bada shehar", definitions, math, coding, how-to, general
+  advice — uspe SEEDHA, CONFIDENTLY jawab de. Web search ki zaroorat NAHI.
+  (e.g. "Pakistan ka sabse bada shehar?" → "Karachi." Bas — ghuma ke nahi.)
+- Sirf TRULY LIVE / PRIVATE / REAL-TIME data jo tu nahi jaan sakta — aaj ka live
+  price/rate, abhi ka mausam, aaj ki news/score, kisi KHAAS bande ka number/
+  address/schedule — uspe guess MAT kar. Seedha bol: "Yeh live data hai —
+  'google pe search karo X' bolo to actual results la doon."
+- BALANCE: jo pakka jaanta hai woh confidently bata (strong, world-class bano);
+  jo live/private hai uspe honest raho. Na fabricate karo, na har choti baat pe
+  "pata nahi" — yeh weak lagta hai. Boss ko ek smart, knowledgeable assistant
+  chahiye jo jaanta hai woh bole, aur jo nahi jaanta uspe saaf ho.
 
 ## TOOL HONESTY:
 - Agar user kuch karne ko bole jo tu nahi kar sakta (e.g., "PDF ke andar ki picture extract kar", "video edit kar", "Skype call kar"):
@@ -579,14 +587,10 @@ class ChatService:
         ]
 
         try:
-            response = client.chat.completions.create(
-                model=self._config.groq_model,
-                messages=messages,
-                temperature=0.7,
-                max_tokens=1000,
-            )
-
-            reply = response.choices[0].message.content.strip()
+            # WORLD-CLASS chat: Claude (Opus) via CLI for the reply — strongest,
+            # best instruction-following. Groq is the fast fallback. (Runs in a
+            # thread so the CLI's latency doesn't block the server.)
+            reply = await asyncio.to_thread(self._chat_reply, full_system, history)
 
             # Hallucinated-success guard: small LLM models tend to copy phrases
             # from earlier successful sends in conversation history and
@@ -1429,6 +1433,27 @@ class ChatService:
     def _is_action_task(cls, message: str) -> bool:
         low = f" {message.strip().lower()} "
         return any(cue in low for cue in cls._ACTION_CUES)
+
+    def _chat_reply(self, full_system: str, history: list[dict]) -> str:
+        """World-class conversational reply via Claude CLI (Opus) — strongest +
+        best instruction-following (follows the action-block protocol better
+        than the small model). Falls back to the fast Groq stack if the CLI is
+        unavailable or errors. Blocking — call via asyncio.to_thread."""
+        try:
+            from app.services.universal_engine.brain import ClaudeCLIBrain
+            brain = ClaudeCLIBrain(model="opus")
+            if brain.is_available():
+                txt = brain.think(full_system, history)
+                if txt and txt.strip():
+                    return txt.strip()
+        except Exception as e:
+            log.warning("cli_chat_fallback_groq", error=str(e)[:140])
+        client = self._get_client()
+        resp = client.chat.completions.create(
+            model=self._config.groq_model,
+            messages=[{"role": "system", "content": full_system}, *history],
+            temperature=0.7, max_tokens=1000)
+        return (resp.choices[0].message.content or "").strip()
 
     async def _is_action_intent(self, message: str) -> bool:
         """SMART router (not just keywords): does the user want JARVIS to DO

@@ -117,10 +117,15 @@ Available actions:
     params: {"board": "optional", "list": "optional list filter"}
     Example: "Trello board pe kya tasks pending hain", "Doing list mein kya hai"
 
-17. "web_search" — Server-side web search for EXTERNAL real-world data (not user's local data).
-    Use SIRF jab user kuch bhi EXTERNAL puchhe — hotels, restaurants, shops, products, services,
-    prices, ratings, news, weather, sports scores, stock prices, jobs, definitions, technology,
-    medicine, geography — koi bhi REAL-WORLD CURRENT DATA jo INTERNET pe hai.
+17. "web_search" — Server-side web search. Use SIRF in 2 cases:
+    (a) User EXPLICITLY search bole — "google pe search karo X", "X online dhundo", ya
+    (b) TRULY LIVE / CURRENT data jo badalta rehta hai — aaj ka price/rate, abhi ka
+        mausam, aaj ki news / sports score, stock price, available jobs, kisi shop/
+        hotel/restaurant ki current listing/rating.
+    ⛔ DO NOT web_search GENERAL KNOWLEDGE — geography ("sabse bada shehar", capitals),
+       history, science, definitions, medicine basics, math, how-to, general advice.
+       Yeh "chat" action hai — chat AI (strong model, Claude) khud confidently jawab
+       deta hai. web_search sirf LIVE/changing data ya EXPLICIT search ke liye.
 
     ⛔ DO NOT use web_search for questions about USER'S OWN data — meetings, tasks, clients,
     calendar events, transcriptions, memory, history. Phrases like "X meeting mein kya hua",
@@ -359,8 +364,11 @@ Output: [{"action":"web_search","params":{"query":"PSL final 2026 score"}}]
 User: "best laptop 1 lakh ke andar 2026"
 Output: [{"action":"web_search","params":{"query":"best laptop under 1 lakh 2026 Pakistan"}}]
 
-User: "panadol ka use kya hota hai"
-Output: [{"action":"web_search","params":{"query":"panadol uses dosage"}}]
+User: "panadol ka use kya hota hai"   (general knowledge → chat AI khud jawab de)
+Output: [{"action":"chat"}]
+
+User: "Pakistan ka sabse bada shehar kaunsa hai"   (general knowledge → chat)
+Output: [{"action":"chat"}]
 
 User: "abhi Karachi mein mausam kaisa hai"
 Output: [{"action":"web_search","params":{"query":"Karachi weather right now"}}]
