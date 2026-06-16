@@ -364,11 +364,11 @@ Output: [{"action":"web_search","params":{"query":"PSL final 2026 score"}}]
 User: "best laptop 1 lakh ke andar 2026"
 Output: [{"action":"web_search","params":{"query":"best laptop under 1 lakh 2026 Pakistan"}}]
 
-User: "panadol ka use kya hota hai"   (general knowledge → chat AI khud jawab de)
-Output: [{"action":"chat"}]
-
-User: "Pakistan ka sabse bada shehar kaunsa hai"   (general knowledge → chat)
-Output: [{"action":"chat"}]
+(YE WEB_SEARCH EXAMPLES SIRF PATTERN KE LIYE HAIN — literally match mat karo.
+ PRINCIPLE har query pe GENERALLY apply karo, kisi specific sawal pe nahi:
+   • general knowledge / jo strong model khud jaanta hai  → {"action":"chat"}
+   • live ya badalti data (price/weather/news/score) YA "search karo" bole → web_search
+ Koi bhi sawal aaye — KHUD samajh ke decide karo, na ke yaad-shuda case se.)
 
 User: "abhi Karachi mein mausam kaisa hai"
 Output: [{"action":"web_search","params":{"query":"Karachi weather right now"}}]
