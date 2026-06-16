@@ -901,59 +901,55 @@ class LaptopNative:
             return opened
         win, cfg, pag = opened["win"], opened["cfg"], opened["pag"]
 
-        if cfg.get("file_via") == "paste":
-            # WhatsApp: focus compose, paste the file (CF_HDROP) → preview
-            self._focus_any(win, cfg["compose"], "Edit") or self._focus_any(win, cfg["compose"], "")
-            r = self.attach_file(win, cfg["compose"][0], p)
-            if not r.get("ok"):
-                return {"ok": False, "error": f"file paste nahi hui: {r.get('error','')}"}
-            time.sleep(1.3)                       # let the preview render
+        # ── STEP 1: CLIPBOARD PASTE first (fastest, simplest) ──
+        # WhatsApp AND modern Teams (Edge WebView) accept a pasted file. Focus
+        # compose → paste the file (CF_HDROP) → preview → Enter. We then VERIFY
+        # the filename actually appears in the chat; only if it does NOT do we
+        # fall back to the attach-button/dialog flow (so no double-attach).
+        self._focus_any(win, cfg["compose"], "Edit") or self._focus_any(win, cfg["compose"], "")
+        if self.attach_file(win, cfg["compose"][0], p).get("ok"):
+            time.sleep(1.6)                       # let the preview render
             if caption:
                 self.paste_text(caption, clear_first=False)
                 time.sleep(0.3)
-            pag.press("enter")                    # send from the preview
-            time.sleep(1.2)
-        else:
-            # Teams (and ANY other app): VISION-hybrid — no hardcoded labels, so
-            # it works for any app/version/language. Vision SEES + clicks the
-            # attach button (app-specific, universal via sight); the OS "Open"
-            # dialog is handled deterministically (same on every Windows).
-            from app.services.laptop_control.vision_control import VisionController
-            vc = VisionController.get()
-
-            # 1) try the known UIA attach buttons first (fast); else use vision
-            if not self._invoke_any(win, cfg.get("attach_btn", []), "Button"):
-                if not vc.click_target("the attach / paperclip / '+' button to add or upload a file").get("ok"):
-                    return {"ok": False, "error": "attach button nahi mila (UIA + vision dono)"}
-            time.sleep(1.0)
-
-            # 2) if a menu opened (no OS dialog yet), pick 'upload from this device'
-            if self._find_window("Open") is None:
-                if not self._invoke_any(win, cfg.get("upload_item", []), "MenuItem") and \
-                   not self._invoke_any(win, cfg.get("upload_item", []), "Button"):
-                    vc.click_target("the 'Upload from this device' / 'Attach from computer' option")
-                time.sleep(1.2)
-
-            # 3) OS Open dialog — universal Windows dialog, handle deterministically
-            picked = self._pick_open_dialog(p)
-            if not picked.get("ok"):
-                return {"ok": False, "error": f"Open dialog handle nahi hua: {picked.get('error','')}"}
-            time.sleep(2.2)                        # let it upload
-
-            if caption:
-                self._focus_any(win, cfg["compose"], "Edit")
-                self.paste_text(caption, clear_first=False)
-                time.sleep(0.3)
-
-            # 4) send — known button, else vision, else Ctrl+Enter
-            if not self._invoke_any(win, cfg.get("send_btn", []), "Button"):
-                if not vc.click_target("the Send button to send the message/file").get("ok"):
-                    pag.hotkey("ctrl", "enter")
+            pag.press("enter")                    # send (if nothing attached → empty, harmless)
             time.sleep(1.8)
+            # robust verify (gives a genuine paste a fair chance before fallback)
+            for _ in range(3):
+                if self._text_in_window(win, base):
+                    return {"ok": True, "verified": True,
+                            "msg": f"'{base}' {contact} ko bhej diya (paste se — fast)"}
+                time.sleep(0.7)
+
+        # ── STEP 2: paste didn't attach → attach button + OS dialog (VISION) ──
+        # Universal, no hardcoded labels: vision SEES + clicks the attach button;
+        # the OS "Open" dialog is the same on every Windows (path paste + Enter).
+        from app.services.laptop_control.vision_control import VisionController
+        vc = VisionController.get()
+        if not self._invoke_any(win, cfg.get("attach_btn", []), "Button"):
+            if not vc.click_target("the attach / paperclip / '+' button to add or upload a file").get("ok"):
+                return {"ok": False, "error": "file attach nahi kar paya (paste + button + vision sab try kiye)"}
+        time.sleep(1.0)
+        if self._find_window("Open") is None:
+            if not self._invoke_any(win, cfg.get("upload_item", []), "MenuItem") and \
+               not self._invoke_any(win, cfg.get("upload_item", []), "Button"):
+                vc.click_target("the 'Upload from this device' / 'Attach from computer' option")
+            time.sleep(1.2)
+        picked = self._pick_open_dialog(p)
+        if not picked.get("ok"):
+            return {"ok": False, "error": f"Open dialog handle nahi hua: {picked.get('error','')}"}
+        time.sleep(2.2)                            # let it upload
+        if caption:
+            self._focus_any(win, cfg["compose"], "Edit")
+            self.paste_text(caption, clear_first=False)
+            time.sleep(0.3)
+        if not self._invoke_any(win, cfg.get("send_btn", []), "Button"):
+            if not vc.click_target("the Send button to send the message/file").get("ok"):
+                pag.hotkey("ctrl", "enter")
+        time.sleep(1.8)
 
         # best-effort verify: does the filename now show in the chat window?
-        seen = self._text_in_window(win, base)
-        if seen:
+        if self._text_in_window(win, base):
             return {"ok": True, "verified": True,
                     "msg": f"'{base}' {contact} ko bhej diya (chat mein file nazar aa rahi hai)"}
         return {"ok": False, "verified": False,
