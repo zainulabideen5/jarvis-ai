@@ -513,13 +513,6 @@ class ChatService:
         if mail is not None:
             return mail
 
-        # IMAGE DEDUP — "folder ki same/duplicate images ka report/sheet" → REAL
-        # local scan (MD5), HONEST report (verified path) — vision/fake-success NAHI.
-        # General: koi bhi folder, koi bhi user.
-        dedup = await self._try_image_dedup(user_message)
-        if dedup is not None:
-            return dedup
-
         # OWN LOCATION — "meri/current location", "main kahan hoon", "where am I" →
         # STORED location se seedha jawab (router/web-search/GPS-prompt se PEHLE).
         # JARVIS ko yeh pehle se pata hai. General — har user ki apni stored location.
@@ -588,36 +581,25 @@ class ChatService:
                 opened = await self._try_open_app(user_message)
                 if opened is not None:
                     return opened
-            if res is None:
-                res = await asyncio.to_thread(self._run_vision, user_message)
-
-            # Vision asked a clarifying question (e.g. "cheese ya zinger?") —
-            # park the task and ask the user, like a real assistant. Resume on
-            # the next message (handled at the top of process_message).
-            if res.get("needs_input"):
-                self._vision_session = {"task": res.get("task", user_message)}
-                q = res.get("question", "Thodi aur detail chahiye, Boss.")
-                await self._save_message("assistant", f"🤔 {q}", "[]")
-                return {"reply": f"🤔 {q}", "actions": [], "awaiting_input": True,
-                        "options": res.get("options") or []}
-
-            # cleanup: minimize the app + bring the dashboard back to front
-            await asyncio.to_thread(self._post_send_cleanup, origin)
-
-            if res.get("ok"):
+            # chat_send (whatsapp/teams) ho gaya?
+            if res is not None and res.get("ok"):
+                await asyncio.to_thread(self._post_send_cleanup, origin)
                 reply = f"✅ {res.get('reply', res.get('msg', ''))}"
                 await self._save_message("assistant", reply, "[]")
-                return {"reply": reply, "actions": [{
-                    "action": "vision_task", "status": "success",
-                    "message": res.get("reply", res.get("msg", "")),
-                }]}
+                return {"reply": reply, "actions": [{"action": "chat_send",
+                        "status": "success", "message": res.get("reply", res.get("msg", ""))}]}
 
-            # Vision se NA ho paya → DEAD-END nahi. Claude se helpful jawab (GENERAL —
-            # chahe yeh sawal mis-route hua ho, ya genuine screen-task tha). Kabhi
-            # bhi "vision model ne jawab nahi diya" jaisa dead error nahi.
-            reply = await self._vision_fail_reply(user_message)
-            await self._save_message("assistant", reply, "[]")
-            return {"reply": reply, "actions": [{"action": "vision_task", "status": "failed"}]}
+            # Kisi fast-path ne handle nahi kiya → GENERAL ENGINE. Yeh Claude-brain +
+            # powershell/UIA tools se KOI BHI files/data/system/app task KHUD code/
+            # command likh ke karta hai, aur zaroorat ho to KHUD vision pe fall karta
+            # hai. Per-task hardcoded handler NAHI — ek general dimaag jo sab kar sakta
+            # hai. Honest: jo actually hua wahi report karta hai (fake success nahi).
+            needs_confirm = any(w in user_message.lower() for w in self._DESTRUCTIVE_WORDS)
+            engine_result = await self._run_engine_task(user_message, needs_confirm=needs_confirm)
+            await self._save_message(
+                "assistant", engine_result.get("reply", ""),
+                json.dumps(engine_result.get("actions", [])))
+            return engine_result
 
         # ENGINE-FIRST for compound / in-app tasks. The legacy intent path is
         # great at atomic commands (open app, find file) but mis-handles
@@ -1692,89 +1674,6 @@ class ChatService:
             reply += f"\n\n_(GPS: {gps['lat']:.4f}, {gps['lon']:.4f})_"
         await self._save_message("assistant", reply, "[]")
         return {"reply": reply, "actions": [{"action": "location", "status": "success"}]}
-
-    async def _extract_image_dedup(self, message: str) -> dict | None:
-        """User kisi folder ki images ko duplicate/same group/report karna chahta
-        hai? {folder} ya None."""
-        import json as _json
-        try:
-            from app.services.universal_engine.brain import ClaudeCLIBrain
-            brain = ClaudeCLIBrain(model="opus")
-            if brain.is_available():
-                txt = brain.think(
-                    "User kisi FOLDER ki IMAGES mein DUPLICATE/same images dhoondh ke "
-                    "group karna ya unka report/sheet banana chahta hai? Agar HAAN to "
-                    'SIRF JSON: {"dedup":true,"folder":"jo folder user ne kaha (Downloads/'
-                    'Desktop/Documents/Pictures ya poora path), warna khali"}. Warna '
-                    '{"dedup":false}.',
-                    [{"role": "user", "content": message}])
-                obj = _json.loads(txt[txt.find("{"):txt.rfind("}") + 1])
-                if obj.get("dedup"):
-                    return {"folder": (obj.get("folder") or "").strip()}
-        except Exception as e:
-            log.warning("image_dedup_extract_failed", err=str(e)[:120])
-        return None
-
-    @staticmethod
-    def _resolve_folder(name: str) -> str:
-        """Folder naam → real path (Downloads/Desktop/Documents/Pictures/path)."""
-        import os
-        n = (name or "").strip().strip('"\'').lower()
-        home = os.environ.get("USERPROFILE", os.path.expanduser("~"))
-        known = {"downloads": "Downloads", "download": "Downloads",
-                 "desktop": "Desktop", "documents": "Documents", "docs": "Documents",
-                 "pictures": "Pictures", "photos": "Pictures", "images": "Pictures"}
-        if name and os.path.isdir(os.path.expandvars(os.path.expanduser(name))):
-            return os.path.abspath(os.path.expandvars(os.path.expanduser(name)))
-        if n in known:
-            return os.path.join(home, known[n])
-        for k, v in known.items():
-            if k in n:
-                return os.path.join(home, v)
-        return os.path.join(home, "Downloads")
-
-    async def _try_image_dedup(self, message: str) -> dict | None:
-        """'folder ki same/duplicate images group karke report/sheet do' → REAL
-        scan (MD5), CSV likho, HONEST report (verified path, no fake success).
-        None agar yeh request nahi."""
-        info = await self._extract_image_dedup(message)
-        if not info:
-            return None
-        import os
-        from app.services.media_dedup import find_image_duplicates, write_report_csv
-        folder = self._resolve_folder(info.get("folder", ""))
-        res = await asyncio.to_thread(find_image_duplicates, folder, True)
-        if not res.get("ok"):
-            reply = f"⚠️ {res.get('error', 'Scan nahi ho saka')}"
-            await self._save_message("assistant", reply, "[]")
-            return {"reply": reply, "actions": [{"action": "image_dedup", "status": "failed"}]}
-        out = os.path.join(folder, "image_duplicates_report.csv")
-        try:
-            out = await asyncio.to_thread(write_report_csv, res, out)
-        except Exception:
-            out = os.path.join(os.environ.get("USERPROFILE", ""), "Documents",
-                               "image_duplicates_report.csv")
-            try:
-                out = await asyncio.to_thread(write_report_csv, res, out)
-            except Exception as e:
-                reply = f"⚠️ Scan ho gaya par report likhne mein masla: {str(e)[:100]}"
-                await self._save_message("assistant", reply, "[]")
-                return {"reply": reply, "actions": [{"action": "image_dedup", "status": "failed"}]}
-        exists = os.path.isfile(out)
-        reply = (
-            f"✅ Boss, **{folder}** scan ho gaya — yeh REAL report hai:\n\n"
-            f"- **Total images:** {res['total']}\n"
-            f"- **Unique images:** {res['unique']}\n"
-            f"- **Duplicate groups** (same image jo 2+ baar hai): {res['dup_groups']}\n"
-            f"- **Extra (fazool) copies:** {res['extra_copies']}\n"
-            f"- **Space wasted:** {res['wasted_mb']} MB\n\n"
-            f"📄 Report file (CSV — Excel/Google Sheets mein khulegi):\n`{out}`"
-            + ("" if exists else "\n\n⚠️ File verify nahi hui — dobara try karun?")
-            + "\n\nGoogle Sheet pe upload chaho to bolo — Drive connect karke kar dunga."
-        )
-        await self._save_message("assistant", reply, "[]")
-        return {"reply": reply, "actions": [{"action": "image_dedup",
-                "status": "success" if exists else "failed"}]}
 
     def _run_vision(self, task: str) -> dict:
         """Blocking see→act loop (runs in a thread). Vision = Claude CLI only.
