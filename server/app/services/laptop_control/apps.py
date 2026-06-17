@@ -255,62 +255,75 @@ class AppController:
                 "content": content or snippet,
             })
 
-        # Step 3 — LLM synthesis with strict no-fabrication guard
+        # Step 3 — synthesis. Claude CLI (Opus) PEHLE — real, Claude/ChatGPT-jaisi
+        # quality + koi quota/limit nahi. Groq sirf fallback (jab CLI available na ho).
+        sources_block = ""
+        for s in sources:
+            sources_block += (
+                f"\n[{s['idx']}] {s['title']}\nURL: {s['url']}\n"
+                f"Content: {s['content']}\n"
+            )
+        prompt = (
+            f"User ka sawal: \"{q}\"\n\n"
+            f"Web sources (real-time fetched):\n{sources_block}\n\n"
+            "In sources ko padh ke user ke sawal ka SAAF, COMPLETE, REAL answer do — "
+            "bilkul jaise Claude/ChatGPT deta hai. Roman Urdu + English mix.\n"
+            "RULES:\n"
+            "- SIRF iss data se answer banao — kuch invent/guess mat karo\n"
+            "- Jitna zaroori utna detail (chhota sawal = chhota jawab; gehra = gehra)\n"
+            "- Citations [1], [2], [3] jahan info us source se aayi\n"
+            "- Agar exact info sources mein na mili to honestly bolo\n"
+            "Answer:"
+        )
+
+        answer = ""
+        # Claude CLI first
         try:
-            from app.core.config import ServerConfig
-            from app.core.llm import LLMClient
+            from app.services.universal_engine.brain import ClaudeCLIBrain
+            brain = ClaudeCLIBrain(model="opus")
+            if brain.is_available():
+                txt = brain.think(
+                    "Tu ek research assistant hai jo SIRF diye gaye real-time web "
+                    "sources se sahi, cited, complete jawab deta hai — kuch invent nahi karta.",
+                    [{"role": "user", "content": prompt}])
+                if txt and txt.strip():
+                    answer = txt.strip()
+        except Exception as e:
+            log.info("web_search_cli_fallback", error=str(e)[:140])
 
-            config = ServerConfig()
-            llm = LLMClient(config)
-
-            sources_block = ""
-            for s in sources:
-                sources_block += (
-                    f"\n[{s['idx']}] {s['title']}\nURL: {s['url']}\n"
-                    f"Content: {s['content']}\n"
+        # Groq fallback (sirf agar CLI na chala)
+        if not answer:
+            try:
+                from app.core.config import ServerConfig
+                from app.core.llm import LLMClient
+                config = ServerConfig()
+                llm = LLMClient(config)
+                response = llm.chat.completions.create(
+                    model=config.groq_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.2, max_tokens=900, timeout=30.0,
                 )
+                answer = (response.choices[0].message.content or "").strip()
+            except Exception as e:
+                log.warning("web_search_synthesis_failed", query=q, error=str(e))
 
-            prompt = (
-                f"User ka sawal: \"{q}\"\n\n"
-                f"Web sources (real-time fetched):\n{sources_block}\n\n"
-                "Sources ko padh ke user ke sawal ka direct answer Roman Urdu + English mix mein de.\n"
-                "RULES:\n"
-                "- SIRF iss data se answer banao — kuch invent mat karo, kuch guess mat karo\n"
-                "- 5-10 lines max, casual friendly tone\n"
-                "- Citations [1], [2], [3] format mein lagao jahan info source [1] etc se aayi\n"
-                "- Agar exact info sources mein nahi mili, honestly bolo \"sources mein exact data nahi mila\"\n"
-                "- Roman Urdu mein bolo, English technical words rakh sakte ho\n\n"
-                "Answer:"
-            )
-
-            response = llm.chat.completions.create(
-                model=config.groq_model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
-                max_tokens=700,
-                timeout=30.0,
-            )
-            answer = response.choices[0].message.content.strip()
-
+        if answer:
             footer = "\n\n📚 **Sources:**"
             for s in sources:
                 footer += f"\n[{s['idx']}] {s['title'][:90]}\n   🔗 {s['url']}"
-
             return True, answer + footer
 
-        except Exception as e:
-            log.warning("web_search_synthesis_failed", query=q, error=str(e))
-            # Synthesis failed — return plain link list so user still gets something
-            lines = [f"🔍 **{q}** — sources (synthesis fail hua, raw links):\n"]
-            for s in sources:
-                preview = (s["content"][:200].rstrip() + "…") if len(s["content"]) > 200 else s["content"]
-                lines.append(f"{s['idx']}. **{s['title']}**")
-                if s["url"]:
-                    lines.append(f"   🔗 {s['url']}")
-                if preview:
-                    lines.append(f"   {preview}")
-                lines.append("")
-            return True, "\n".join(lines)
+        # Dono fail — plain link list (kuch to mile)
+        lines = [f"🔍 **{q}** — sources (synthesis fail hua, raw links):\n"]
+        for s in sources:
+            preview = (s["content"][:200].rstrip() + "…") if len(s["content"]) > 200 else s["content"]
+            lines.append(f"{s['idx']}. **{s['title']}**")
+            if s["url"]:
+                lines.append(f"   🔗 {s['url']}")
+            if preview:
+                lines.append(f"   {preview}")
+            lines.append("")
+        return True, "\n".join(lines)
 
     @staticmethod
     def focus_window(title_substring: str) -> tuple[bool, str]:
