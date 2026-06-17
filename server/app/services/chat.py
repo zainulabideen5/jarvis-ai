@@ -513,6 +513,12 @@ class ChatService:
         if mail is not None:
             return mail
 
+        # UNDO / REDO — "undo karo" / "redo karo" → reversible file/folder ops
+        # ulta/dobara (deterministic, general). Sent msg/email pe honest "nahi ho sakta".
+        ur = await self._try_undo_redo(user_message)
+        if ur is not None:
+            return ur
+
         # OWN LOCATION — "meri/current location", "main kahan hoon", "where am I" →
         # STORED location se seedha jawab (router/web-search/GPS-prompt se PEHLE).
         # JARVIS ko yeh pehle se pata hai. General — har user ki apni stored location.
@@ -1674,6 +1680,24 @@ class ChatService:
             reply += f"\n\n_(GPS: {gps['lat']:.4f}, {gps['lon']:.4f})_"
         await self._save_message("assistant", reply, "[]")
         return {"reply": reply, "actions": [{"action": "location", "status": "success"}]}
+
+    async def _try_undo_redo(self, message: str) -> dict | None:
+        """'undo karo' / 'redo karo' → reversible file/folder ops ulta / dobara.
+        Deterministic + general. None agar undo/redo command nahi hai."""
+        import re as _re
+        low = message.strip().lower()
+        is_redo = bool(_re.search(r"\bredo\b|dobara\s+kar\s*do", low))
+        is_undo = (not is_redo) and bool(_re.search(
+            r"\bundo\b|wapas\s*(le\s*aao|karo|kar\s*do|kr\s*do|laao)", low))
+        if not (is_undo or is_redo):
+            return None
+        from app.services.undo_history import UndoHistory
+        r = await asyncio.to_thread(UndoHistory.redo if is_redo else UndoHistory.undo)
+        icon = ("↪️" if is_redo else "↩️") if r.get("ok") else "⚠️"
+        reply = f"{icon} {r.get('msg', '')}"
+        await self._save_message("assistant", reply, "[]")
+        return {"reply": reply, "actions": [{"action": "redo" if is_redo else "undo",
+                "status": "success" if r.get("ok") else "failed"}]}
 
     def _run_vision(self, task: str) -> dict:
         """Blocking see→act loop (runs in a thread). Vision = Claude CLI only.

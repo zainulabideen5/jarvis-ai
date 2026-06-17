@@ -373,11 +373,96 @@ def _re_escape(s: str) -> str:
     return re.escape(s or "")
 
 
+# ----------------------------------------------------------------------
+# Reversible (UNDOABLE) file/folder tools — file ops ke liye YEH use karo
+# (powershell se NAHI), taake user "undo karo"/"redo karo" kar sake. General.
+# ----------------------------------------------------------------------
+def create_file(path: str, content: str = "") -> dict:
+    """Nayi file banao (UNDOABLE)."""
+    import os
+    from app.services.undo_history import UndoHistory
+    try:
+        path = os.path.abspath(os.path.expandvars(os.path.expanduser(path)))
+        if os.path.exists(path):
+            return {"ok": False, "error": "file pehle se maujood hai"}
+        if os.path.dirname(path):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content or "")
+        UndoHistory.record({"kind": "create", "path": path,
+                            "desc": f"file banai: {os.path.basename(path)}"})
+        return {"ok": True, "path": path}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
+def create_folder(path: str) -> dict:
+    """Naya folder banao (UNDOABLE)."""
+    import os
+    from app.services.undo_history import UndoHistory
+    try:
+        path = os.path.abspath(os.path.expandvars(os.path.expanduser(path)))
+        if os.path.exists(path):
+            return {"ok": False, "error": "folder pehle se maujood hai"}
+        os.makedirs(path)
+        UndoHistory.record({"kind": "create", "path": path,
+                            "desc": f"folder banaya: {os.path.basename(path)}"})
+        return {"ok": True, "path": path}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
+def move_path(src: str, dst: str) -> dict:
+    """File/folder ko move ya rename karo (UNDOABLE)."""
+    import os
+    import shutil
+    from app.services.undo_history import UndoHistory
+    try:
+        src = os.path.abspath(os.path.expandvars(os.path.expanduser(src)))
+        dst = os.path.abspath(os.path.expandvars(os.path.expanduser(dst)))
+        if not os.path.exists(src):
+            return {"ok": False, "error": "source nahi mila"}
+        if os.path.isdir(dst):
+            dst = os.path.join(dst, os.path.basename(src))
+        if os.path.dirname(dst):
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.move(src, dst)
+        UndoHistory.record({"kind": "move", "src": src, "dst": dst,
+                            "desc": f"move/rename: {os.path.basename(src)}"})
+        return {"ok": True, "from": src, "to": dst}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
+def delete_path(path: str) -> dict:
+    """File/folder ko RECOVERABLE trash mein bhejo (permanent delete NAHI) — UNDOABLE."""
+    import os
+    import shutil
+    from app.services.undo_history import UndoHistory, trash_path_for
+    try:
+        path = os.path.abspath(os.path.expandvars(os.path.expanduser(path)))
+        if not os.path.exists(path):
+            return {"ok": False, "error": "path nahi mila"}
+        trash = trash_path_for(path)
+        if os.path.dirname(trash):
+            os.makedirs(os.path.dirname(trash), exist_ok=True)
+        shutil.move(path, trash)
+        UndoHistory.record({"kind": "delete", "orig": path, "trash": trash,
+                            "desc": f"delete (recoverable): {os.path.basename(path)}"})
+        return {"ok": True, "deleted": path, "recoverable_at": trash}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
 # ======================================================================
 # Registry — what the brain sees
 # ======================================================================
 
 TOOLS = {
+    "create_file": create_file,
+    "create_folder": create_folder,
+    "move_path": move_path,
+    "delete_path": delete_path,
     "list_windows": list_windows,
     "focus_window": focus_window,
     "ui_tree": ui_tree,
@@ -411,7 +496,12 @@ TOOLS_DOC = """
 - resize_window {"title": "...", "width": 1000, "height": 720} — window ko chhota karo agar full-screen ho
 - close_app {"name": "..."} — app band
 - open_url {"url": "https://..."} — user ke default browser mein URL
-- powershell {"command": "..."} — files/system ka sab kaam (rename, move, list, create). Input-injection (SendKeys) BLOCKED hai — typing ke liye set_text/type_in_window use karo
+- create_file {"path":"...","content":"..."} — nayi file banao (UNDOABLE)
+- create_folder {"path":"..."} — naya folder banao (UNDOABLE)
+- move_path {"src":"...","dst":"..."} — file/folder move ya rename (UNDOABLE)
+- delete_path {"path":"..."} — file/folder ko RECOVERABLE trash mein bhejo (permanent NAHI) (UNDOABLE)
+  ★ FILE/FOLDER create/move/rename/delete ke liye HAMESHA yeh 4 tools use karo — powershell se NAHI — taake user baad mein "undo karo" kar sake. (powershell sirf reading/listing/info ke liye.)
+- powershell {"command": "..."} — files/system ki READING/info/listing (process, settings query). File MODIFY (create/move/delete) yahan se MAT karo — upar wale undoable tools use karo. Input-injection (SendKeys) BLOCKED hai
 - find_files {"query": "...", "location": "Desktop?"} — file dhundo
 - screenshot_check {"query": "..."} — LAST RESORT vision (sirf jab ui_tree fail ho)
 - wait {"seconds": 2} — load hone ka intezar
