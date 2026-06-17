@@ -167,6 +167,35 @@ class AppController:
             return False, f"URL open nahi hui: {e}"
 
     @staticmethod
+    def _render_page_text(url: str, timeout_ms: int = 22000) -> str:
+        """JS-heavy page ko Playwright (headless) se RENDER karke uska rendered
+        text nikaalo — jab raw HTML fetch se content na aaye. General: kisi bhi
+        SPA/JS site pe. Blocking; web_search thread mein chalta hai."""
+        try:
+            from playwright.sync_api import sync_playwright
+        except Exception:
+            return ""
+        try:
+            with sync_playwright() as p:
+                b = p.chromium.launch(headless=True)
+                try:
+                    pg = b.new_page(user_agent=(
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"))
+                    pg.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                    try:
+                        pg.wait_for_load_state("networkidle", timeout=6000)
+                    except Exception:
+                        pass
+                    txt = pg.evaluate("document.body ? document.body.innerText : ''")
+                    return (txt or "").strip()
+                finally:
+                    b.close()
+        except Exception as e:
+            log.info("render_page_failed", url=url[:60], err=str(e)[:100])
+            return ""
+
+    @staticmethod
     def web_search(query: str) -> tuple[bool, str]:
         """Perplexity-style research: search → fetch top pages → LLM synthesizes a cited answer.
 
@@ -254,6 +283,23 @@ class AppController:
                 "url": url,
                 "content": content or snippet,
             })
+
+        # KHUD-DECIDE escalation: agar koi source JS-blocked/thin hai (raw HTML mein
+        # asli content nahi — SPA/JS site), to Playwright se RENDER karke real text
+        # lao. General — kisi bhi JS site pe chalta hai, koi site hardcode nahi.
+        def _is_thin(c: str) -> bool:
+            cl = (c or "").lower()
+            return (len(c.strip()) < 200
+                    or "enable javascript" in cl
+                    or "you need to enable" in cl
+                    or "requires javascript" in cl)
+
+        for s in sources:
+            if s.get("url") and _is_thin(s.get("content", "")):
+                rendered = AppController._render_page_text(s["url"])
+                if rendered and len(rendered.strip()) > len(s.get("content", "").strip()):
+                    s["content"] = rendered[:2000]
+                    log.info("web_search_js_rendered", url=s["url"][:60], chars=len(rendered))
 
         # Step 3 — synthesis. Claude CLI (Opus) PEHLE — real, Claude/ChatGPT-jaisi
         # quality + koi quota/limit nahi. Groq sirf fallback (jab CLI available na ho).
