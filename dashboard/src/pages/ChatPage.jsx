@@ -16,7 +16,13 @@ export default function ChatPage() {
   // Live engine progress line ("Screen parh raha hun…" etc.) shown while a
   // multi-step task runs, so the wait doesn't feel frozen.
   const [progressLine, setProgressLine] = useState('');
+  // When JARVIS asks a clarifying question with choices, we show a persistent
+  // option-box (clickable buttons, Claude-style). Kept OUTSIDE `messages` so the
+  // 5s history poll can't wipe it. Cleared when the user picks or sends anything.
+  const [pendingQuestion, setPendingQuestion] = useState(null);
   const endRef = useRef(null);
+  const messagesRef = useRef(null);     // scrollable container
+  const prevCountRef = useRef(0);       // detect when a NEW message is added
   const recognitionRef = useRef(null);
   const fileInputRef = useRef(null);
   // Mirror `loading` into a ref so the history poller (a stable-closure
@@ -99,7 +105,14 @@ export default function ChatPage() {
       if (loadingRef.current && historyLoaded) return;
       api.getChatHistory().then((history) => {
         if (history.length > 0) {
-          setMessages(history.map((m) => ({ role: m.role, content: m.content, actions: m.actions || [] })));
+          setMessages((prev) => {
+            const next = history.map((m) => ({ role: m.role, content: m.content, actions: m.actions || [] }));
+            // Kuch badla nahi? to wahi array rakho — bewajah re-render/scroll na ho.
+            const same = prev.length === next.length
+              && prev[prev.length - 1]?.content === next[next.length - 1]?.content
+              && prev[prev.length - 1]?.role === next[next.length - 1]?.role;
+            return same ? prev : next;
+          });
         } else if (!historyLoaded) {
           setMessages([{ role: 'assistant', content: 'Salam boss! Main aap ka AI assistant hun. Kya karna hai? Bol ya type kar.', actions: [] }]);
         }
@@ -116,8 +129,20 @@ export default function ChatPage() {
     return () => clearInterval(id);
   }, [historyLoaded]);
 
+  // Auto-scroll ONLY when it makes sense — warna har 5s history-poll user ko
+  // wapas neeche khींch leti thi (ooper padhna mumkin nahi tha).
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const c = messagesRef.current;
+    const grew = messages.length > prevCountRef.current;
+    prevCountRef.current = messages.length;
+    const last = messages[messages.length - 1];
+    const nearBottom = c
+      ? c.scrollHeight - c.scrollTop - c.clientHeight < 160
+      : true;
+    // neeche tab jao jab: user pehle se neeche ho, YA usne abhi khud message bheja
+    if (nearBottom || (grew && last?.role === 'user')) {
+      endRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages]);
 
   const handleAttachClick = () => {
@@ -155,6 +180,7 @@ export default function ChatPage() {
     setMessages((prev) => [...prev, userMsg]);
     setInput('');
     setLoading(true);
+    setPendingQuestion(null);   // user ne kuch bheja → purana question-box hatao
 
     // Upload attached files first to get server-side paths
     let serverPaths = null;
@@ -192,6 +218,10 @@ export default function ChatPage() {
           pending: result.pending || [],
         },
       ]);
+      // JARVIS ne choices ke saath sawal pucha → clickable option-box dikhao
+      if (Array.isArray(result.options) && result.options.length > 0) {
+        setPendingQuestion({ question: result.reply, options: result.options });
+      }
     } catch (err) {
       setMessages((prev) => [
         ...prev,
@@ -385,7 +415,7 @@ export default function ChatPage() {
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto mb-4 space-y-3">
+      <div ref={messagesRef} className="flex-1 overflow-y-auto mb-4 space-y-3">
         {messages.map((msg, i) => (
           <div key={msg.id ?? `${msg.role}-${msg.created_at ?? ''}-${i}`} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[75%] rounded-xl px-4 py-3 ${
@@ -482,6 +512,38 @@ export default function ChatPage() {
 
         <div ref={endRef} />
       </div>
+
+      {/* Question-box — JARVIS ka clarifying sawal + clickable options (Claude-style) */}
+      {pendingQuestion && !loading && (
+        <div
+          className="mb-3 px-4 py-3 rounded-xl"
+          style={{ background: 'rgba(34, 211, 238, 0.07)', border: '1px solid var(--border)' }}
+        >
+          <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'var(--text-dim)' }}>
+            🤔 Chuno ya neeche type karo:
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {pendingQuestion.options.map((opt, i) => (
+              <button
+                key={`${opt}-${i}`}
+                onClick={() => { setPendingQuestion(null); sendMessage(opt); }}
+                disabled={loading}
+                className="px-4 py-2 rounded-lg text-sm font-medium transition-all disabled:opacity-50"
+                style={{
+                  background: 'linear-gradient(135deg, #22d3ee, #0891b2)',
+                  color: '#001018',
+                  border: '1px solid #67e8f9',
+                  boxShadow: '0 0 12px rgba(34, 211, 238, 0.35)',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-1px)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = ''; }}
+              >
+                {opt}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Input */}
       {attachments.length > 0 && (

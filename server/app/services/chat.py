@@ -519,7 +519,8 @@ class ChatService:
                 self._vision_session = {"task": res.get("task", user_message)}
                 q = res.get("question", "Thodi aur detail chahiye, Boss.")
                 await self._save_message("assistant", f"🤔 {q}", "[]")
-                return {"reply": f"🤔 {q}", "actions": [], "awaiting_input": True}
+                return {"reply": f"🤔 {q}", "actions": [], "awaiting_input": True,
+                        "options": res.get("options") or []}
 
             # cleanup: minimize the app + bring the dashboard back to front
             await asyncio.to_thread(self._post_send_cleanup, origin)
@@ -1794,8 +1795,11 @@ class ChatService:
             "chhod do. LEKIN agar user ne specific cheezon ka HAWALA diya (yeh yeh / "
             "woh / jo baat) par batayi NAHI, ya email ka content hi clear nahi → "
             "draft HARGIZ MAT banao, Boss se SEEDHA SAAF sawal pucho ke EXACTLY kya "
-            "chahiye (meta baat 'kya main pooch sakta hoon' nahi):\n"
-            '{"need_info": true, "question":"<seedha chhota sawal — kya batana hai>"}\n'
+            "chahiye (meta baat 'kya main pooch sakta hoon' nahi). Agar sawal ke "
+            "2-4 clear-cut CHOICES ban sakte hain (KOI BHI cheez ke — jo bhi actual "
+            "options us sawal ke hon) to 'options' mein woh do taake user click kar "
+            "sake; warna options [] (khali):\n"
+            '{"need_info": true, "question":"<seedha chhota sawal>", "options":["choice1","choice2"]}\n'
             + ("" if force else
                'Agar email BHEJNE ka request hi NAHI (app kholna/sawal/baat) to: '
                '{"is_email": false}\n')
@@ -1850,6 +1854,7 @@ class ChatService:
             self._email_session = {"stage": "gather", "instruction": message, "to": to}
             await self._save_message("assistant", f"🤔 {q}", "[]")
             return {"reply": f"🤔 {q}", "awaiting_input": True,
+                    "options": draft.get("options") or [],
                     "actions": [{"action": "email_clarify", "status": "awaiting_input"}]}
         if not to:
             self._email_session = {"stage": "gather", "instruction": message, "to": ""}
@@ -1952,7 +1957,8 @@ class ChatService:
                      else "Boss, kis email/naam ko bhejni hai?")
                 self._email_session = {"stage": "gather", "instruction": combined, "to": to}
                 await self._save_message("assistant", f"🤔 {q}", "[]")
-                return {"reply": f"🤔 {q}", "awaiting_input": True, "actions": []}
+                return {"reply": f"🤔 {q}", "awaiting_input": True,
+                        "options": (new.get("options") or []), "actions": []}
             subject = (new.get("subject") or "(no subject)").strip()
             body = (new.get("body") or "").strip()
             frm = (new.get("from_account") or sess.get("from_account") or "").strip()

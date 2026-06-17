@@ -50,13 +50,15 @@ SIRF ek JSON object do, aur kuch nahi:
   {"action":"click_type_xy","x":X,"y":Y,"text":"...","why":""} -- (X,Y) pe click PHIR likho
   {"action":"type","text":"...","why":"short"}          -- abhi-focused box me likho
   {"action":"key","key":"enter","why":"short"}          -- key dabao (enter/tab/esc/ctrl+a)
-  {"action":"ask","question":"user se poochne wala sawal"} -- jab CHOICE/ambiguity ho
+  {"action":"ask","question":"sawal","options":["choice1","choice2"]} -- jab CHOICE/ambiguity ho (options[] = clickable buttons; na ho to options chhod do)
   {"action":"done","reply":"user ko jawab"}             -- task complete
   {"action":"fail","reply":"kyun nahi hua"}             -- nahi ho saka (honest)
 
 JAB SAMAJH NA AAYE / CHOICE HO → GUESS MAT KARO, "ask" karo:
-- Screen pe kai options (e.g. cheese vs zinger burger) aur user ne specify nahi
-  kiya → "ask": {"action":"ask","question":"Kaunsa burger? Cheese ya Zinger?"}
+- Jab KOI BHI cheez ke kai mumkin CHOICES hon (variant/item/size/jagah/option —
+  kuch bhi) aur user ne specify nahi kiya → "ask" with options:
+  {"action":"ask","question":"<seedha sawal>","options":["<choice-1>","<choice-2>", ...]}
+  options[] = jo bhi ACTUAL choices screen/context mein hain (jitni bhi hon).
 - WEBSITE/STORE ka URL clear na ho (user ne "HMS"/"X store" kaha par woh kaunsi
   site hai pata nahi) → URL ka ANDAZA MAT lagao (galat site khul jati hai). "ask"
   karo: {"action":"ask","question":"'HMS' kaunsi website/store hai? Poora naam ya
@@ -557,8 +559,11 @@ class VisionController:
             if kind == "ask":
                 # Ambiguity / choice (e.g. cheese vs zinger) → ask the user back
                 # instead of guessing. chat parks the task + resumes with the answer.
+                # `options` (agar diye) → dashboard clickable buttons bana deta hai.
+                opts = action.get("options")
                 return {"ok": False, "needs_input": True,
                         "question": action.get("question", "Thodi aur detail chahiye, Boss."),
+                        "options": opts if isinstance(opts, list) else [],
                         "task": task, "steps": step}
 
             rec = self._record_action(action, marks, offset)
