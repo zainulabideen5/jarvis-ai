@@ -483,6 +483,13 @@ class ChatService:
             if pick is not None:
                 return pick
 
+        # OPEN-WEB profile pick — pichli baar konse Chrome profile poocha tha,
+        # ab yeh uska jawab (clicked option ya naam) → us profile mein site kholo.
+        if getattr(self, "_open_web_session", None):
+            r = await self._resume_open_web(user_message)
+            if r is not None:
+                return r
+
         # EMAIL — confirm/edit a parked draft, ya naya email-send. Apni branch
         # (action-classifier pe depend nahi) taake "email bhejo" kabhi web-search
         # ya vision pe na chala jaye. Outlook desktop (silent) se jata hai.
@@ -531,6 +538,12 @@ class ChatService:
                 shop = await self._try_shopping(user_message)
                 if shop is not None:
                     return shop
+            # OPEN WEBSITE/web-app in a Chrome PROFILE — agar kai profiles hon to
+            # box se pucho konsa (whatsapp web/gmail/koi bhi site, profile-specific).
+            if res is None:
+                web = await self._try_open_web(user_message)
+                if web is not None:
+                    return web
             # APP OPEN — desktop/Windows app kholna? Claude naam samjhe, REAL opener
             # se kholo (vision se NAHI — woh sirf browser dekhta, Windows app nahi kholta).
             if res is None:
@@ -1897,6 +1910,135 @@ class ChatService:
         reply = f"{'✅' if ok else '⚠️'} {msg}"
         await self._save_message("assistant", reply, "[]")
         return {"reply": reply, "actions": [{"action": "open_app",
+                "status": "success" if ok else "failed"}]}
+
+    # ---------------- OPEN WEBSITE / WEB-APP in a chosen Chrome profile -----------
+    def _chrome_profiles(self) -> list[dict]:
+        """Chrome ke saare profiles (dir + display name) Local State se. General —
+        har user ke apne profiles."""
+        import json as _json
+        import os
+        path = os.path.join(os.environ.get("LOCALAPPDATA", ""),
+                            "Google", "Chrome", "User Data", "Local State")
+        try:
+            with open(path, encoding="utf-8") as f:
+                cache = _json.load(f).get("profile", {}).get("info_cache", {})
+            out = [{"dir": d, "name": (i.get("name") or d)} for d, i in cache.items()]
+            out.sort(key=lambda p: (p["dir"] != "Default", p["name"].lower()))
+            return out
+        except Exception as e:
+            log.info("chrome_profiles_read_failed", err=str(e)[:120])
+            return []
+
+    def _extract_web_open_cli(self, message: str) -> dict | None:
+        """Claude: user kisi WEBSITE/web-app ko browser mein kholna chahta hai?
+        Returns {url, profile} ya None. Blocking."""
+        import json as _json
+        try:
+            from app.services.universal_engine.brain import ClaudeCLIBrain
+            brain = ClaudeCLIBrain(model="opus")
+            if brain.is_available():
+                txt = brain.think(
+                    "User kisi WEBSITE / web-app ko BROWSER mein kholna chahta hai? "
+                    "Agar HAAN to SIRF yeh JSON: "
+                    '{"web_open":true,"url":"poora https url (e.g. '
+                    'https://web.whatsapp.com, https://mail.google.com)",'
+                    '"profile":"agar user ne koi chrome profile/account naam bola to '
+                    'wahi, warna khali"}. Agar website-kholne ka request NAHI hai '
+                    '(app kholna, sawal, message bhejna) to {"web_open":false}.',
+                    [{"role": "user", "content": message}])
+                obj = _json.loads(txt[txt.find("{"):txt.rfind("}") + 1])
+                if obj.get("web_open") and obj.get("url"):
+                    return {"url": obj["url"].strip(),
+                            "profile": (obj.get("profile") or "").strip()}
+        except Exception as e:
+            log.warning("web_open_extract_failed", err=str(e)[:120])
+        return None
+
+    def _open_in_profile(self, url: str, profile_dir: str) -> bool:
+        """URL ko diye gaye Chrome profile mein kholo (profile_dir khali = default)."""
+        try:
+            from app.services.browser_live import _chrome_exe
+            import subprocess
+            exe = _chrome_exe()
+            if not exe:
+                return False
+            args = [exe, url] if not profile_dir else [
+                exe, f"--profile-directory={profile_dir}", url]
+            subprocess.Popen(args, close_fds=True)
+            return True
+        except Exception as e:
+            log.warning("open_in_profile_failed", err=str(e)[:120])
+            return False
+
+    async def _try_open_web(self, message: str) -> dict | None:
+        """'X website/web-app chrome mein kholo' → kai profiles + koi specify nahi
+        to BOX se pucho (konsa profile), warna seedha us profile mein kholo.
+        None agar web-open nahi."""
+        info = await asyncio.to_thread(self._extract_web_open_cli, message)
+        if not info:
+            return None
+        url = info["url"]
+        profiles = self._chrome_profiles()
+
+        def _open_reply(pdir, pname=""):
+            ok = self._open_in_profile(url, pdir)
+            tag = f" ({pname} profile)" if pname else ""
+            return ok, (f"✅ Khol diya{tag}: {url}" if ok else f"⚠️ {url} khol nahi paya")
+
+        # user ne profile bataya → match
+        hint = (info.get("profile") or "").lower()
+        if hint:
+            for p in profiles:
+                if hint in p["name"].lower() or hint in p["dir"].lower():
+                    ok, reply = await asyncio.to_thread(_open_reply, p["dir"], p["name"])
+                    await self._save_message("assistant", reply, "[]")
+                    return {"reply": reply, "actions": [{"action": "open_web",
+                            "status": "success" if ok else "failed"}]}
+        # 0 ya 1 profile → seedha kholo
+        if len(profiles) <= 1:
+            pdir = profiles[0]["dir"] if profiles else ""
+            ok, reply = await asyncio.to_thread(_open_reply, pdir, "")
+            await self._save_message("assistant", reply, "[]")
+            return {"reply": reply, "actions": [{"action": "open_web",
+                    "status": "success" if ok else "failed"}]}
+        # kai profiles + koi specify nahi → BOX se pucho (clickable)
+        self._open_web_session = {"url": url, "profiles": profiles}
+        q = (f"🤔 Boss, **{url}** konse Chrome profile mein kholun? "
+             "(jis profile mein us account ki login hai)")
+        await self._save_message("assistant", q, "[]")
+        return {"reply": q, "awaiting_input": True,
+                "options": [p["name"] for p in profiles],
+                "actions": [{"action": "open_web_clarify", "status": "awaiting_input"}]}
+
+    async def _resume_open_web(self, message: str) -> dict | None:
+        """Box/typed se profile chuna → us profile mein url kholo. None agar
+        unrelated (session chhod ke normal route)."""
+        sess = getattr(self, "_open_web_session", None)
+        if not sess:
+            return None
+        low = message.strip().lower()
+        if any(w in low for w in ("cancel", "rehne do", "chodo", "chhodo", "nahi")):
+            self._open_web_session = None
+            reply = "Theek hai Boss, nahi khola."
+            await self._save_message("assistant", reply, "[]")
+            return {"reply": reply, "actions": []}
+        chosen = None
+        for p in sess["profiles"]:
+            nl = p["name"].lower()
+            if low == nl or low in nl or nl in low or low in p["dir"].lower():
+                chosen = p
+                break
+        if not chosen:
+            self._open_web_session = None
+            return None        # naya unrelated command → normal route
+        url = sess["url"]
+        self._open_web_session = None
+        ok = await asyncio.to_thread(self._open_in_profile, url, chosen["dir"])
+        reply = (f"✅ {chosen['name']} profile mein khol diya: {url}" if ok
+                 else f"⚠️ {url} khol nahi paya")
+        await self._save_message("assistant", reply, "[]")
+        return {"reply": reply, "actions": [{"action": "open_web",
                 "status": "success" if ok else "failed"}]}
 
     def _email_llm(self, prompt: str) -> str:
