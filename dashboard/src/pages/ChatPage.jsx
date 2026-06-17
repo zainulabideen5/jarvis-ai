@@ -20,6 +20,8 @@ export default function ChatPage() {
   // option-box (clickable buttons, Claude-style). Kept OUTSIDE `messages` so the
   // 5s history poll can't wipe it. Cleared when the user picks or sends anything.
   const [pendingQuestion, setPendingQuestion] = useState(null);
+  const [showOtherInput, setShowOtherInput] = useState(false);  // "Other" → inline text field
+  const [otherText, setOtherText] = useState('');
   const endRef = useRef(null);
   const messagesRef = useRef(null);     // scrollable container
   const prevCountRef = useRef(0);       // detect when a NEW message is added
@@ -200,6 +202,7 @@ export default function ChatPage() {
     setInput('');
     setLoading(true);
     setPendingQuestion(null);   // user ne kuch bheja → purana question-box hatao
+    setShowOtherInput(false);
 
     // Upload attached files first to get server-side paths
     let serverPaths = null;
@@ -541,36 +544,74 @@ export default function ChatPage() {
           style={{ background: 'rgba(34, 211, 238, 0.07)', border: '1px solid var(--border)' }}
         >
           <p className="text-xs uppercase tracking-widest mb-2" style={{ color: 'var(--text-dim)' }}>
-            🤔 Chuno ya neeche type karo:
+            🤔 Chuno{showOtherInput ? ' — apna jawab likho:' : ' ya neeche type karo:'}
           </p>
-          <div className="flex flex-wrap gap-2">
-            {pendingQuestion.options.map((opt, i) => (
+          {!showOtherInput ? (
+            <div className="flex flex-wrap gap-2">
+              {pendingQuestion.options.map((opt, i) => (
+                <button
+                  key={`${opt}-${i}`}
+                  onClick={() => { setPendingQuestion(null); sendMessage(opt); }}
+                  className="px-4 py-2 rounded-lg text-sm font-medium transition-all"
+                  style={{
+                    background: 'linear-gradient(135deg, #22d3ee, #0891b2)',
+                    color: '#001018',
+                    border: '1px solid #67e8f9',
+                    boxShadow: '0 0 12px rgba(34, 211, 238, 0.35)',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-1px)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.transform = ''; }}
+                >
+                  {opt}
+                </button>
+              ))}
+              {/* "Other" — inline text field kholo (Claude-style) */}
               <button
-                key={`${opt}-${i}`}
-                onClick={() => { setPendingQuestion(null); sendMessage(opt); }}
-                disabled={loading}
-                className="px-4 py-2 rounded-lg text-sm font-medium transition-all disabled:opacity-50"
-                style={{
-                  background: 'linear-gradient(135deg, #22d3ee, #0891b2)',
-                  color: '#001018',
-                  border: '1px solid #67e8f9',
-                  boxShadow: '0 0 12px rgba(34, 211, 238, 0.35)',
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-1px)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.transform = ''; }}
+                onClick={() => { setShowOtherInput(true); setOtherText(''); }}
+                className="px-4 py-2 rounded-lg text-sm font-medium transition-all"
+                style={{ background: 'transparent', color: 'var(--text-dim)', border: '1px dashed var(--border)' }}
               >
-                {opt}
+                ✏️ Other (apna type karo)
               </button>
-            ))}
-            {/* "Other" — apna jawab khud type karo (Claude-style) */}
-            <button
-              onClick={() => { setPendingQuestion(null); setTimeout(() => inputRef.current?.focus(), 50); }}
-              className="px-4 py-2 rounded-lg text-sm font-medium transition-all"
-              style={{ background: 'transparent', color: 'var(--text-dim)', border: '1px dashed var(--border)' }}
-            >
-              ✏️ Other (apna type karo)
-            </button>
-          </div>
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              <input
+                autoFocus
+                type="text"
+                value={otherText}
+                onChange={(e) => setOtherText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && otherText.trim()) {
+                    const t = otherText.trim();
+                    setOtherText(''); setShowOtherInput(false); setPendingQuestion(null);
+                    sendMessage(t);
+                  }
+                }}
+                placeholder="Apna jawab yahan likho..."
+                className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-cyan-500"
+              />
+              <button
+                onClick={() => {
+                  if (otherText.trim()) {
+                    const t = otherText.trim();
+                    setOtherText(''); setShowOtherInput(false); setPendingQuestion(null);
+                    sendMessage(t);
+                  }
+                }}
+                className="px-4 py-2 rounded-lg text-sm font-medium"
+                style={{ background: 'linear-gradient(135deg, #22d3ee, #0891b2)', color: '#001018', border: '1px solid #67e8f9' }}
+              >
+                Send
+              </button>
+              <button
+                onClick={() => setShowOtherInput(false)}
+                className="px-3 py-2 rounded-lg text-sm text-gray-400 border border-gray-700"
+              >
+                ←
+              </button>
+            </div>
+          )}
         </div>
       )}
 
