@@ -526,7 +526,19 @@ class ChatService:
         route = await self._route_intent(user_message)
         if route == "search" and not self._is_vision_request(user_message):
             from app.services.laptop_control.apps import AppController
-            ok_s, ans_s = await asyncio.to_thread(AppController.web_search, user_message)
+            import datetime as _dt
+            today = _dt.date.today().isoformat()
+            try:
+                from app.services.environment import get_location
+                _loc = await asyncio.to_thread(get_location)
+                loc_best = _loc.get("best") or ""
+            except Exception:
+                loc_best = ""
+            # raw Roman-Urdu message se nahi — Claude se ek PROPER search query banao
+            # (English, date+location ke saath) taake relevant result aaye, shayari nahi.
+            query = await asyncio.to_thread(
+                self._make_search_query, user_message, today, loc_best)
+            ok_s, ans_s = await asyncio.to_thread(AppController.web_search, query)
             if ok_s and ans_s and ans_s.strip():
                 await self._save_message("assistant", ans_s.strip(), "[]")
                 return {"reply": ans_s.strip(),
@@ -1620,6 +1632,30 @@ class ChatService:
             return "answer"
         except Exception:
             return "answer"
+
+    def _make_search_query(self, message: str, today: str = "", location: str = "") -> str:
+        """User ke (Roman-Urdu/casual) sawal ka BEST web-search query banao (English,
+        specific, search-engine friendly) — taake relevant results aayein, na ke
+        shayari/junk. Blocking. General — har query pe. Fail ho to raw message."""
+        try:
+            from app.services.universal_engine.brain import ClaudeCLIBrain
+            brain = ClaudeCLIBrain(model="opus")
+            if brain.is_available():
+                sys = (
+                    "User ke (Roman Urdu / casual) sawal ka BEST concise WEB SEARCH "
+                    "query banao — English, specific, search-engine friendly. "
+                    f"{('Aaj ki date: ' + today + '. ') if today else ''}"
+                    "Agar time-sensitive ho (aaj/today/latest/abhi/forecast) to date/'today' "
+                    "include karo. "
+                    f"{('User ki location: ' + location + ' (location-relative ho to use karo). ') if location else ''}"
+                    "SIRF query do — koi explanation, koi quotes nahi."
+                )
+                txt = brain.ask(sys, [{"role": "user", "content": message}])
+                if txt and txt.strip():
+                    return txt.strip().strip('"').splitlines()[0][:140]
+        except Exception as e:
+            log.warning("make_search_query_failed", err=str(e)[:120])
+        return message
 
     async def _answer_own_location(self, message: str) -> dict | None:
         """User apni OWN current location pooch raha hai? → seedha STORED location
