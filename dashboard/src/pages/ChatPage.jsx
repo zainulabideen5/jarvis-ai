@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, memo } from 'react';
 import { api } from '../api';
 
 export default function ChatPage() {
@@ -669,15 +669,16 @@ export default function ChatPage() {
           onChange={handleFilesSelected}
           className="hidden"
         />
-        <input
+        <textarea
           ref={inputRef}
-          type="text"
+          rows={1}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={attachments.length > 0 ? `File + message bhejo... (e.g. "Saif ko WhatsApp pe bhejo")` : "Baat karo ya command do..."}
+          placeholder={attachments.length > 0 ? `File + message bhejo... (e.g. "Saif ko WhatsApp pe bhejo")` : "Baat karo ya command do... (Shift+Enter = nayi line)"}
           disabled={loading}
-          className="flex-1 bg-gray-900 border border-gray-800 rounded-xl px-4 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500 disabled:opacity-50"
+          className="flex-1 bg-gray-900 border border-gray-800 rounded-xl px-4 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500 disabled:opacity-50 resize-none"
+          style={{ maxHeight: '140px', minHeight: '40px' }}
         />
         <button
           onClick={() => sendMessage(input)}
@@ -709,7 +710,9 @@ function renderInline(text, kp) {
 
 // Lightweight markdown → JSX (headings, bullets, numbered, bold, code, links,
 // blank-line spacing). Professional rendering for ALL assistant replies.
-function MarkdownText({ text }) {
+// memo: typing pe (jab sirf `input` badle) yeh dobara parse NA ho — warna har
+// keystroke pe saare messages re-render hote the => typing laggy/hang.
+const MarkdownText = memo(function MarkdownText({ text }) {
   const lines = (text || '').split('\n');
   const blocks = [];
   let list = null;
@@ -740,7 +743,7 @@ function MarkdownText({ text }) {
   });
   flush('end');
   return <div className="text-sm leading-relaxed space-y-1">{blocks}</div>;
-}
+});
 
 function VerificationButtons({ verification, onAction }) {
   if (!verification?.buttons) return null;
