@@ -47,16 +47,21 @@ class ClaudeCLIBrain:
         return self._exe is not None
 
     def think(self, system: str, transcript: list[dict]) -> str:
-        """Run one completion. transcript = [{role, content}, ...].
+        """Engine completion — JSON-protocol suffix lagta hai (engine JSON parse
+        karta hai). transcript = [{role, content}, ...]."""
+        return self._run_cli(system, self._build_prompt(transcript, json_protocol=True))
 
-        Returns the raw model text (engine parses the JSON protocol).
-        """
+    def ask(self, system: str, transcript: list[dict]) -> str:
+        """PLAIN PROSE answer — koi JSON-protocol suffix NAHI. Chat replies aur
+        web-search synthesis isko use karte hain taake Claude natural text de,
+        na ke {"reply":...} / {"next_step":...} JSON."""
+        return self._run_cli(system, self._build_prompt(transcript, json_protocol=False))
+
+    def _run_cli(self, system: str, prompt: str) -> str:
         if not self._exe:
             raise BrainError(
                 "Claude CLI nahi mila. Install: npm install -g @anthropic-ai/claude-code"
             )
-
-        prompt = self._build_prompt(transcript)
         # The system prompt (full playbook) is large — passing it on the command
         # line hits Windows' "command line too long" limit. Write it to a temp
         # file and use --system-prompt-file instead.
@@ -123,15 +128,19 @@ class ClaudeCLIBrain:
         return str(result).strip()
 
     @staticmethod
-    def _build_prompt(transcript: list[dict]) -> str:
-        """Flatten history into the user prompt (system goes via flag)."""
+    def _build_prompt(transcript: list[dict], json_protocol: bool = True) -> str:
+        """Flatten history into the user prompt (system goes via flag).
+        json_protocol=True → engine ko "ek JSON object do" suffix (think). False →
+        plain prose (ask), koi JSON forcing nahi."""
         parts = []
         for msg in transcript:
             role = msg.get("role", "user")
-            label = "Pichla step" if role == "assistant" else "Input"
+            label = "Pichla step" if (role == "assistant" and json_protocol) else (
+                "Assistant" if role == "assistant" else "Input")
             parts.append(f"{label}: {msg.get('content', '')}")
         parts.append("")
-        parts.append("Agla step kya hai? Sirf ek JSON object do.")
+        if json_protocol:
+            parts.append("Agla step kya hai? Sirf ek JSON object do.")
         return "\n".join(parts)
 
 

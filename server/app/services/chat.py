@@ -1475,7 +1475,7 @@ class ChatService:
             from app.services.universal_engine.brain import ClaudeCLIBrain
             brain = ClaudeCLIBrain(model="opus")
             if brain.is_available():
-                txt = brain.think(full_system, history)
+                txt = brain.ask(full_system, history)   # PROSE (no JSON suffix)
                 if txt and txt.strip():
                     return txt.strip()
         except Exception as e:

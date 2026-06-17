@@ -282,7 +282,7 @@ class AppController:
             from app.services.universal_engine.brain import ClaudeCLIBrain
             brain = ClaudeCLIBrain(model="opus")
             if brain.is_available():
-                txt = brain.think(
+                txt = brain.ask(   # PROSE (no JSON suffix) — clean cited answer
                     "Tu ek research assistant hai jo SIRF diye gaye real-time web "
                     "sources se sahi, cited, complete jawab deta hai — kuch invent nahi karta.",
                     [{"role": "user", "content": prompt}])
