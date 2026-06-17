@@ -25,6 +25,7 @@ export default function ChatPage() {
   const prevCountRef = useRef(0);       // detect when a NEW message is added
   const recognitionRef = useRef(null);
   const fileInputRef = useRef(null);
+  const inputRef = useRef(null);   // text input — "Other" option pe focus karne ke liye
   // Mirror `loading` into a ref so the history poller (a stable-closure
   // interval) can SKIP overwriting messages while a send is in flight —
   // otherwise the 5s poll wiped optimistic bubbles + confirm buttons mid-send.
@@ -561,6 +562,14 @@ export default function ChatPage() {
                 {opt}
               </button>
             ))}
+            {/* "Other" — apna jawab khud type karo (Claude-style) */}
+            <button
+              onClick={() => { setPendingQuestion(null); setTimeout(() => inputRef.current?.focus(), 50); }}
+              className="px-4 py-2 rounded-lg text-sm font-medium transition-all"
+              style={{ background: 'transparent', color: 'var(--text-dim)', border: '1px dashed var(--border)' }}
+            >
+              ✏️ Other (apna type karo)
+            </button>
           </div>
         </div>
       )}
@@ -620,6 +629,7 @@ export default function ChatPage() {
           className="hidden"
         />
         <input
+          ref={inputRef}
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
