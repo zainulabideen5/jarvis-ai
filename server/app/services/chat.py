@@ -484,6 +484,12 @@ class ChatService:
         if mail is not None:
             return mail
 
+        # FAST SHORTCUT — obvious commands (app open / clean send) INSTANT, bina LLM
+        # (Claude pe load kam, no Groq, no limit). Match na ho → niche Claude flow.
+        shortcut = await self._fast_shortcut(user_message)
+        if shortcut is not None:
+            return shortcut
+
         # VISION control — if the user asks JARVIS to "dekh ke" / "screen se" /
         # "vision se" do something, run the see→act loop (works on ANY app/web).
         if self._is_vision_request(user_message) or await self._is_action_intent(user_message):
@@ -1741,6 +1747,57 @@ class ChatService:
         await self._save_message("assistant", reply, "[]")
         return {"reply": reply, "actions": [{"action": "open_product",
                 "status": "success", "url": url}]}
+
+    async def _fast_shortcut(self, message: str) -> dict | None:
+        """No-LLM INSTANT lane for OBVIOUS commands — app open / clean chat-send.
+        Returns a reply dict if handled with high confidence, warna None (→ normal
+        Claude flow). General + self-adaptive: app/contact MESSAGE se nikalte hain,
+        kuch hardcode nahi; jo bhi app us machine pe ho woh khulega (Start menu)."""
+        import re as _re
+        low = message.strip().lower()
+        if not low:
+            return None
+
+        # ---- APP OPEN: "open <app>" / "<app> kholo / khol do / chalu karo / chala do"
+        target = None
+        m1 = _re.match(r"^(?:open|launch)\s+(.+)$", low)
+        m2 = _re.match(
+            r"^(.+?)\s+(?:khol\s*do|kholo|kholna|chalu\s*kar(?:o|do)?|"
+            r"chala\s*do|launch|open)\s*$", low)
+        if m1:
+            target = m1.group(1)
+        elif m2:
+            target = m2.group(1)
+        if target:
+            target = target.strip(" .!\"'")
+            # high-confidence only: chhota, saaf naam — warna Claude
+            if target and len(target) <= 40 and len(target.split()) <= 4:
+                from app.services.laptop_control.apps import AppController
+                ok, msg = await asyncio.to_thread(AppController.open_app, target)
+                if ok:
+                    reply = f"✅ {msg}"
+                    await self._save_message("assistant", reply, "[]")
+                    return {"reply": reply, "actions": [{"action": "open_app",
+                            "status": "success"}]}
+                # open fail (naam resolve nahi hua) → None → Claude samjhe
+
+        # ---- CLEAN CHAT-SEND: "<contact> ko <msg> bhejo" (whatsapp/teams), deterministic
+        parsed = self._parse_chat_send(message)
+        if parsed:
+            app, contact, msg_text = parsed
+            from app.services.laptop_control.laptop_native import LaptopNative
+            nat = LaptopNative.get()
+            origin = await asyncio.to_thread(nat.active_window_title)
+            res = await asyncio.to_thread(nat.chat_send, app, contact, msg_text)
+            if res.get("ok"):
+                await asyncio.to_thread(self._post_send_cleanup, origin)
+                reply = f"✅ {res.get('reply', res.get('msg', 'Bhej diya'))}"
+                await self._save_message("assistant", reply, "[]")
+                return {"reply": reply, "actions": [{"action": "chat_send",
+                        "status": "success"}]}
+            # send fail → None → normal flow (vision) try kare
+
+        return None
 
     def _email_llm(self, prompt: str) -> str:
         """JSON-only LLM call for email compose. Claude (Opus) first — strong
