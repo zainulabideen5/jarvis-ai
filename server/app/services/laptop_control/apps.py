@@ -308,6 +308,12 @@ class AppController:
                 log.warning("web_search_synthesis_failed", query=q, error=str(e))
 
         if answer:
+            # Claude brain kabhi engine-format ({"next_step":...} / ```json) leak
+            # kar deta hai — prose answer se woh artifacts saaf karo.
+            import re as _re2
+            answer = _re2.sub(r"```json\s*.*?```", "", answer, flags=_re2.S)
+            answer = _re2.sub(r'\{\s*"next_step"\s*:.*?\}', "", answer, flags=_re2.S)
+            answer = _re2.sub(r"\n[-\s]*$", "", answer.strip()).strip()
             footer = "\n\n📚 **Sources:**"
             for s in sources:
                 footer += f"\n[{s['idx']}] {s['title'][:90]}\n   🔗 {s['url']}"
