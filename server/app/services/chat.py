@@ -513,6 +513,13 @@ class ChatService:
         if mail is not None:
             return mail
 
+        # OWN LOCATION — "meri/current location", "main kahan hoon", "where am I" →
+        # STORED location se seedha jawab (router/web-search/GPS-prompt se PEHLE).
+        # JARVIS ko yeh pehle se pata hai. General — har user ki apni stored location.
+        loc_ans = await self._answer_own_location(user_message)
+        if loc_ans is not None:
+            return loc_ans
+
         # ROUTE (3-way, GENERAL): public web-INFO (menu/price/news/details, koi bhi)
         # → web_search se REAL jawab chat mein (vision NAHI). Screen/app KAAM → vision.
         # Warna → Claude chat (general knowledge/baat).
@@ -1592,8 +1599,11 @@ class ChatService:
             "private logged-in data ko khol ke padhna (stripe/bank/email inbox/dashboard).\n"
             "- search = PUBLIC web INFO chahiye jo model ko pakka nahi pata ya badalti "
             "hai — restaurant ka menu, kisi cheez/jagah ka price/rate, reviews, news, "
-            "address, 'X ke baare mein', latest details.\n"
-            "- answer = general knowledge jo model KHUD jaanta hai, ya aam baat-cheet.\n\n"
+            "kisi DOOSRI jagah ka address, 'X ke baare mein', latest details.\n"
+            "- answer = general knowledge jo model KHUD jaanta hai, aam baat-cheet, YA "
+            "user ki APNI current LOCATION / 'main kahan hoon' / 'meri location' "
+            "(JARVIS ko yeh pehle se context mein pata hai — iske liye web search MAT "
+            "karo, answer do).\n\n"
             f"Message: {message}\nJSON:"
         )
         try:
@@ -1610,6 +1620,35 @@ class ChatService:
             return "answer"
         except Exception:
             return "answer"
+
+    async def _answer_own_location(self, message: str) -> dict | None:
+        """User apni OWN current location pooch raha hai? → seedha STORED location
+        se jawab (router/web-search/GPS-prompt se pehle). JARVIS ke paas yeh pehle
+        se hai. General — har user ki apni stored location. None agar yeh own-location
+        sawal nahi."""
+        import re as _re
+        low = message.lower()
+        cues = (
+            r"where\s+am\s+i",
+            r"\b(meri|meree|apni|apne|mera|mere|current)\s+(location|jagah|area|place)\b",
+            r"\b(kahan|kaha|kidhar|kidher)\s+(hoon|hu|hoo|ho|hun|hain|baitha)\b",
+            r"\bmai?n?\s+(kahan|kaha|kidhar|kidher)\b",
+            r"\b(current|live|meri|apni)\s+location\b",
+            r"location\s+bata",
+        )
+        if not any(_re.search(c, low) for c in cues):
+            return None
+        from app.services.environment import get_location
+        loc = await asyncio.to_thread(get_location)
+        best = loc.get("best")
+        if not best:
+            return None     # abhi pata nahi → normal flow (shayad GPS allow karna ho)
+        gps = loc.get("gps") or {}
+        reply = f"📍 Boss, aap is waqt yahan hain:\n\n**{best}**"
+        if gps.get("lat"):
+            reply += f"\n\n_(GPS: {gps['lat']:.4f}, {gps['lon']:.4f})_"
+        await self._save_message("assistant", reply, "[]")
+        return {"reply": reply, "actions": [{"action": "location", "status": "success"}]}
 
     def _run_vision(self, task: str) -> dict:
         """Blocking see→act loop (runs in a thread). Vision = Claude CLI only.
