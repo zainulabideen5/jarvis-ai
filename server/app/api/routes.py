@@ -1499,6 +1499,20 @@ async def location_set(body: dict):
     return set_user_location(str((body or {}).get("location", "")))
 
 
+@router.post("/location/gps")
+async def location_gps(body: dict):
+    """Dashboard browser se PRECISE GPS (lat/lon) — JARVIS khud user ki exact
+    location jaan le (reverse-geocode + store). Body: {'lat': .., 'lon': ..}."""
+    import asyncio
+    from app.services.environment import set_gps_location
+    try:
+        lat = float((body or {}).get("lat"))
+        lon = float((body or {}).get("lon"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="lat/lon chahiye (numbers)")
+    return await asyncio.to_thread(set_gps_location, lat, lon)
+
+
 @router.post("/stop")
 async def stop_task():
     """STOP the currently running task — it halts at its next step. Works even

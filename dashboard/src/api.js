@@ -135,6 +135,9 @@ export const api = {
   // STOP a running task — halts the engine/vision loop at its next step.
   stopTask: () => postJSON('/stop', {}),
 
+  // Location — send precise browser GPS so JARVIS khud user ki exact location jaane.
+  setGpsLocation: (lat, lon) => postJSON('/location/gps', { lat, lon }),
+
   // Office COM check
   officeCheck: () => fetchJSON('/office/check'),
 

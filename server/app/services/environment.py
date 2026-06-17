@@ -158,20 +158,59 @@ def set_user_location(text: str) -> dict:
     return loc
 
 
+def _reverse_geocode(lat: float, lon: float) -> dict | None:
+    """lat/long ko area+city mein badlo — OpenStreetMap Nominatim (free, no key)."""
+    import urllib.request
+    try:
+        url = (f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}"
+               f"&lon={lon}&zoom=16&addressdetails=1&accept-language=en")
+        req = urllib.request.Request(url, headers={"User-Agent": "JARVIS-Assistant/1.0"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            d = json.loads(r.read().decode())
+        a = d.get("address", {}) or {}
+        area = (a.get("suburb") or a.get("neighbourhood") or a.get("residential")
+                or a.get("quarter") or a.get("road") or "")
+        city = (a.get("city") or a.get("town") or a.get("state_district")
+                or a.get("county") or a.get("state") or "")
+        display = ", ".join([p for p in (area, city, a.get("country")) if p]) \
+            or d.get("display_name", "")
+        return {"area": area, "city": city, "display": display}
+    except Exception as e:
+        log.warning("reverse_geocode_failed", error=str(e)[:120])
+        return None
+
+
+def set_gps_location(lat: float, lon: float) -> dict:
+    """Dashboard browser ne PRECISE GPS bheja → reverse-geocode + store. Yeh
+    sabse pakka location (city-level IP se behtar). Self-adaptive: har user ka apna."""
+    loc = _read_loc()
+    geo = _reverse_geocode(lat, lon) or {}
+    loc["gps"] = {
+        "lat": lat, "lon": lon,
+        "area": geo.get("area"), "city": geo.get("city"),
+        "display": geo.get("display"), "_ts": time.time(),
+    }
+    _write_loc(loc)
+    log.info("gps_location_set", area=(geo.get("display") or "")[:70])
+    return get_location()
+
+
 def get_location(refresh_ip: bool = False) -> dict:
-    """Best-known location: user-set area (precise) + IP city (auto). Order
-    logic should prefer `user_set` if present, else `ip`."""
+    """Best-known location. Preference: GPS (precise, browser) > user_set > IP city."""
     loc = _read_loc()
     if refresh_ip or "ip" not in loc or (time.time() - loc.get("ip", {}).get("_ts", 0) > 1800):
         ip = detect_location_by_ip()
         if ip:
             loc["ip"] = ip
             _write_loc(loc)
+    gps = loc.get("gps") or {}
+    gps_best = gps.get("display") or gps.get("area") or gps.get("city")
     return {
+        "gps": loc.get("gps"),                           # precise (browser GPS)
         "user_set": loc.get("user_set"),                 # precise, user-given
         "ip": loc.get("ip"),                             # approx city (auto)
-        "best": loc.get("user_set") or (loc.get("ip", {}) or {}).get("city"),
-        "note": "user_set sabse pakka; IP sirf city-level. Nearby outlet ke liye 'best' use karo.",
+        "best": gps_best or loc.get("user_set") or (loc.get("ip", {}) or {}).get("city"),
+        "note": "GPS sabse pakka; phir user_set; IP sirf city-level. Nearby ke liye 'best' use karo.",
     }
 
 

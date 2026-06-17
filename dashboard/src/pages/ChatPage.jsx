@@ -63,6 +63,17 @@ export default function ChatPage() {
     return () => clearInterval(id);
   }, []);
 
+  // JARVIS khud user ki PRECISE location jaan le — ek dafa browser GPS (permission
+  // maangega). Deny/unavailable ho to IP-based city fallback already chalta hai.
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { api.setGpsLocation(pos.coords.latitude, pos.coords.longitude).catch(() => {}); },
+      () => { /* denied/unavailable — IP fallback handles it */ },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 600000 }
+    );
+  }, []);
+
   const toggleJarvisListening = async () => {
     try {
       if (jarvisListening) {
