@@ -445,13 +445,15 @@ class ChatService:
                 await self._save_message("assistant", f"🤔 {q}", "[]")
                 return {"reply": f"🤔 {q}", "actions": [], "awaiting_input": True}
             await asyncio.to_thread(self._post_send_cleanup, origin)
-            reply = f"{'✅' if res.get('ok') else '⚠️'} {res.get('reply', res.get('msg', res.get('error','')))}"
+            if res.get("ok"):
+                reply = f"✅ {res.get('reply', res.get('msg', ''))}"
+                await self._save_message("assistant", reply, "[]")
+                return {"reply": reply, "actions": [{"action": "vision_task",
+                        "status": "success", "message": res.get("reply", res.get("msg", ""))}]}
+            # Vision se na hua → DEAD-END nahi; Claude decide kare (web-search/jawab)
+            reply = await self._vision_fail_reply(sess.get("task", user_message))
             await self._save_message("assistant", reply, "[]")
-            return {"reply": reply, "actions": [{
-                "action": "vision_task",
-                "status": "success" if res.get("ok") else "failed",
-                "message": res.get("reply", res.get("msg", "")),
-            }]}
+            return {"reply": reply, "actions": [{"action": "vision_task", "status": "failed"}]}
 
         # RESUME a paused engine task — if the engine asked a clarifying
         # question last turn, this message is the answer. Continue from there.
@@ -492,9 +494,21 @@ class ChatService:
         if mail is not None:
             return mail
 
-        # VISION control — if the user asks JARVIS to "dekh ke" / "screen se" /
-        # "vision se" do something, run the see→act loop (works on ANY app/web).
-        if self._is_vision_request(user_message) or await self._is_action_intent(user_message):
+        # ROUTE (3-way, GENERAL): public web-INFO (menu/price/news/details, koi bhi)
+        # → web_search se REAL jawab chat mein (vision NAHI). Screen/app KAAM → vision.
+        # Warna → Claude chat (general knowledge/baat).
+        route = await self._route_intent(user_message)
+        if route == "search" and not self._is_vision_request(user_message):
+            from app.services.laptop_control.apps import AppController
+            ok_s, ans_s = await asyncio.to_thread(AppController.web_search, user_message)
+            if ok_s and ans_s and ans_s.strip():
+                await self._save_message("assistant", ans_s.strip(), "[]")
+                return {"reply": ans_s.strip(),
+                        "actions": [{"action": "web_search", "status": "success"}]}
+            # search se kuch na mila → niche Claude chat handle kar lega
+
+        # VISION control — screen/app pe kuch KARNA ho (ya explicit "dekh ke/screen se").
+        if self._is_vision_request(user_message) or route == "do":
             from app.services.laptop_control.laptop_native import LaptopNative
             nat = LaptopNative.get()
             # remember where the user was (dashboard) so we can return after
@@ -1535,6 +1549,43 @@ class ChatService:
         except Exception:
             return False           # safe default: treat as answer (don't auto-act)
 
+    async def _route_intent(self, message: str) -> str:
+        """3-way router (GENERAL, no keyword hardcode):
+        - 'do'     = screen/app KAAM (app kholo, message/file bhejo, click/fill/
+                     navigate, order/buy/cart/checkout, control) YA user ka APNA
+                     private logged-in data padhna (stripe/bank/email inbox/dashboard).
+        - 'search' = PUBLIC web INFO chahiye jo badalti hai/model ko pakka nahi pata —
+                     restaurant menu, price/rate, reviews, news, address, details,
+                     'X ke baare mein'.
+        - 'answer' = general knowledge jo model khud jaanta hai, ya aam baat-cheet.
+        Default 'answer' (safe). Claude chat phir bhi web_search action de sakta hai."""
+        prompt = (
+            "User ke message ko EK category do. SIRF JSON: "
+            '{"route":"do|search|answer"}\n'
+            "- do = computer/app/web pe KAAM (app kholo, message/file bhejo, click/"
+            "fill/navigate, order/buy/cart/checkout, app control), YA user ke APNE "
+            "private logged-in data ko khol ke padhna (stripe/bank/email inbox/dashboard).\n"
+            "- search = PUBLIC web INFO chahiye jo model ko pakka nahi pata ya badalti "
+            "hai — restaurant ka menu, kisi cheez/jagah ka price/rate, reviews, news, "
+            "address, 'X ke baare mein', latest details.\n"
+            "- answer = general knowledge jo model KHUD jaanta hai, ya aam baat-cheet.\n\n"
+            f"Message: {message}\nJSON:"
+        )
+        try:
+            client = self._get_client()
+            resp = await asyncio.to_thread(lambda: client.chat.completions.create(
+                model=self._config.groq_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0, max_tokens=20))
+            txt = (resp.choices[0].message.content or "").lower()
+            if "search" in txt:
+                return "search"
+            if '"do"' in txt or "'do'" in txt or ": do" in txt or "route: do" in txt:
+                return "do"
+            return "answer"
+        except Exception:
+            return "answer"
+
     def _run_vision(self, task: str) -> dict:
         """Blocking see→act loop (runs in a thread). Vision = Claude CLI only.
         Injects the user's location so location-relevant tasks (food order,
@@ -1552,34 +1603,51 @@ class ChatService:
         return VisionController.get().run(task)
 
     async def _vision_fail_reply(self, message: str) -> str:
-        """Vision se na ho paya → DEAD error ke bajaye Claude se HELPFUL jawab
-        (general). Agar yeh actually sawal/baat thi (mis-route) to Claude seedha
-        jawab de dega; genuine screen-task tha to short batayega kaise ho sakta
-        hai. Recent context bhi deta hoon (reference resolve ho)."""
+        """Vision se na ho paya → DEAD error NAHI. Claude KHUD decide karta hai:
+        agar live/web INFO chahiye (menu, price, details, news, address) to WEB
+        SEARCH kar ke real jawab; warna seedha helpful jawab/guidance. GENERAL —
+        har vision-fail (main ya resume path) pe."""
         ctx = await self._recent_context()
+        decision = await asyncio.to_thread(self._vision_fail_decide, message, ctx)
 
-        def _call() -> str:
+        # Claude ne web-search maanga (live info) → search kar ke real jawab do
+        if decision.startswith("SEARCH:"):
+            query = decision[len("SEARCH:"):].strip() or message
             try:
-                from app.services.universal_engine.brain import ClaudeCLIBrain
-                brain = ClaudeCLIBrain(model="opus")
-                if brain.is_available():
-                    sys = (
-                        "Tu JARVIS hai — Roman Urdu + English mix, professional + saaf "
-                        "format. User ne kuch poocha ya karne ko kaha. Agar yeh SAWAL/"
-                        "baat hai to SEEDHA sahi jawab do. Agar koi screen/app KAAM tha "
-                        "jo abhi nahi hua, to short + helpful batao kaise ho sakta hai "
-                        "ya kya chahiye. KABHI dead 'fail/nahi hua' jaisa jawab mat do."
-                    )
-                    convo = (f"Pichli baat-cheet:\n{ctx}\n\n" if ctx else "") + message
-                    txt = brain.ask(sys, [{"role": "user", "content": convo}])
-                    if txt and txt.strip():
-                        return txt.strip()
+                from app.services.laptop_control.apps import AppController
+                ok, ans = await asyncio.to_thread(AppController.web_search, query)
+                if ok and ans and ans.strip():
+                    return ans.strip()
             except Exception as e:
-                log.warning("vision_fail_reply_failed", err=str(e)[:120])
-            return ("Boss, yeh main abhi theek se nahi kar paya — thoda clear bata do "
-                    "ya alag tarike se, phir karta hoon.")
+                log.info("vision_fail_search_failed", err=str(e)[:120])
+            return (f"Boss, '{query}' web pe dhoondha par theek result nahi mila — "
+                    "thoda aur specific (poora naam/website) bata do?")
 
-        return await asyncio.to_thread(_call)
+        return decision or ("Boss, yeh main abhi theek se nahi kar paya — thoda clear "
+                            "bata do ya alag tarike se, phir karta hoon.")
+
+    def _vision_fail_decide(self, message: str, ctx: str) -> str:
+        """Claude: SEARCH:<query> (agar web info chahiye) ya seedha jawab. Blocking."""
+        try:
+            from app.services.universal_engine.brain import ClaudeCLIBrain
+            brain = ClaudeCLIBrain(model="opus")
+            if brain.is_available():
+                sys = (
+                    "Tu JARVIS hai (Roman Urdu+English, professional, saaf format). User "
+                    "ka ek kaam screen/vision se nahi ho paya. DECIDE kar:\n"
+                    "- Agar user ko LIVE/web INFO chahiye (menu, price, details, kisi "
+                    "cheez ki maloomat, news, address, reviews) → SIRF yeh ek line do, "
+                    "aur kuch nahi: SEARCH: <best chhota web query>\n"
+                    "- Warna (aam sawal/baat/guidance) → SEEDHA helpful jawab do (koi "
+                    "'SEARCH:' nahi). KABHI dead 'fail/nahi hua' mat bolo."
+                )
+                convo = (f"Pichli baat-cheet:\n{ctx}\n\n" if ctx else "") + f"Request: {message}"
+                txt = brain.ask(sys, [{"role": "user", "content": convo}])
+                if txt and txt.strip():
+                    return txt.strip()
+        except Exception as e:
+            log.warning("vision_fail_decide_failed", err=str(e)[:120])
+        return ""
 
     def _post_send_cleanup(self, origin: str | None) -> None:
         """After ANY app-control task: minimize the app we used + bring the
