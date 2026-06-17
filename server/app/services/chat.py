@@ -1887,11 +1887,25 @@ class ChatService:
         smtps = [a.get("smtp", "") for a in accs if a.get("smtp")]
         if frm:
             needle = frm.strip().lower()
-            for s in smtps:
-                if needle in s.lower() or s.lower() in needle:
-                    return {"display": s, "send": s}          # matched real account
+            low = [s.lower() for s in smtps]
+            # 1) exact full email
+            for s, sl in zip(smtps, low):
+                if sl == needle:
+                    return {"display": s, "send": s}
+            # 2) local-part exact ya start (jaise "davina" -> davinaclaire@...)
+            starts = [s for s, sl in zip(smtps, low)
+                      if sl.split("@")[0] == needle or sl.startswith(needle)]
+            if len(starts) == 1:
+                return {"display": starts[0], "send": starts[0]}
+            # 3) substring kahin bhi
+            subs = [s for s, sl in zip(smtps, low) if needle in sl]
+            if len(subs) == 1:
+                return {"display": subs[0], "send": subs[0]}
+            if len(subs) > 1:
+                return {"display": f"{subs[0]}  (note: '{frm}' se {len(subs)} accounts "
+                        "match hue — poora email likho to pakka isi se)", "send": subs[0]}
             return {"display": f"{frm} ⚠️ (Outlook mein yeh account abhi nahi mila — "
-                    f"default se jayegi; login kar lo to isi se jayegi)", "send": frm}
+                    "default se jayegi; account login kar lo to isi se jayegi)", "send": frm}
         if smtps:
             return {"display": f"{smtps[0]} (default)", "send": ""}
         return {"display": "default Outlook account", "send": ""}

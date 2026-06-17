@@ -105,8 +105,8 @@ class EmailSender:
                     via = r_oc.get("from_account")
                     src = f" ({via} se)" if via else " (via Outlook desktop)"
                     note = ""
-                    if r_oc.get("from_warning"):
-                        note = f" — note: {r_oc['from_warning']}"
+                    if r_oc.get("warning"):
+                        note = f" — note: {r_oc['warning']}"
                     return True, f"Email bhej diya {', '.join(oc_emails)} ko{src}{note}"
                 log.info("outlook_com_failed_fallback", error=r_oc.get("error", ""))
         except Exception as e:

@@ -424,14 +424,33 @@ class OfficeCOM:
                     matched_account = None
                     try:
                         session = outlook.Session
-                        for i in range(1, session.Accounts.Count + 1):
-                            acc = session.Accounts.Item(i)
-                            smtp = (getattr(acc, "SmtpAddress", "") or "").lower()
-                            dname = (getattr(acc, "DisplayName", "") or "").lower()
-                            if needle in smtp or needle in dname:
-                                matched_account = acc
-                                routed_via = getattr(acc, "SmtpAddress", "") or getattr(acc, "DisplayName", "")
+                        accs = [session.Accounts.Item(i)
+                                for i in range(1, session.Accounts.Count + 1)]
+
+                        def _smtp(a):
+                            return (getattr(a, "SmtpAddress", "") or "").lower()
+
+                        def _dn(a):
+                            return (getattr(a, "DisplayName", "") or "").lower()
+
+                        # exact smtp -> local-part/startswith -> substring (smtp ya display)
+                        for a in accs:
+                            if _smtp(a) == needle:
+                                matched_account = a
                                 break
+                        if matched_account is None:
+                            for a in accs:
+                                if _smtp(a).split("@")[0] == needle or _smtp(a).startswith(needle):
+                                    matched_account = a
+                                    break
+                        if matched_account is None:
+                            for a in accs:
+                                if needle in _smtp(a) or needle in _dn(a):
+                                    matched_account = a
+                                    break
+                        if matched_account is not None:
+                            routed_via = (getattr(matched_account, "SmtpAddress", "")
+                                          or getattr(matched_account, "DisplayName", ""))
                     except Exception:
                         pass
                     if matched_account is not None:
