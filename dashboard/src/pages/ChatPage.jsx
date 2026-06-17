@@ -145,6 +145,13 @@ export default function ChatPage() {
     }
   }, [messages]);
 
+  // Refresh / first load → seedha LATEST (neeche) pe jao, beech mein nahi.
+  useEffect(() => {
+    if (!historyLoaded) return;
+    const t = setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'auto' }), 80);
+    return () => clearTimeout(t);
+  }, [historyLoaded]);
+
   const handleAttachClick = () => {
     fileInputRef.current?.click();
   };
