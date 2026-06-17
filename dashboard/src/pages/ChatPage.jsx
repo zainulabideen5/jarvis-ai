@@ -430,7 +430,9 @@ export default function ChatPage() {
                 ? 'bg-blue-600 text-white'
                 : 'bg-gray-900 border border-gray-800 text-gray-200'
             }`}>
-              <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+              {msg.role === 'assistant'
+                ? <MarkdownText text={msg.content} />
+                : <p className="text-sm whitespace-pre-wrap">{msg.content}</p>}
 
               {/* Attachment chips on user's own message */}
               {msg.role === 'user' && msg.attachments_preview?.length > 0 && (
@@ -625,6 +627,57 @@ export default function ChatPage() {
       </div>
     </div>
   );
+}
+
+// Inline markdown: **bold**, `code`, [text](url)
+function renderInline(text, kp) {
+  const nodes = [];
+  const regex = /(\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))/g;
+  let last = 0, k = 0, m;
+  while ((m = regex.exec(text)) !== null) {
+    if (m.index > last) nodes.push(text.slice(last, m.index));
+    if (m[2] !== undefined) nodes.push(<strong key={`${kp}-b${k++}`} className="text-white">{m[2]}</strong>);
+    else if (m[3] !== undefined) nodes.push(<code key={`${kp}-c${k++}`} className="px-1 py-0.5 rounded bg-black/40 text-cyan-300 text-[12px]">{m[3]}</code>);
+    else if (m[4] !== undefined) nodes.push(<a key={`${kp}-a${k++}`} href={m[5]} target="_blank" rel="noreferrer" className="text-cyan-400 underline break-all">{m[4]}</a>);
+    last = regex.lastIndex;
+  }
+  if (last < text.length) nodes.push(text.slice(last));
+  return nodes;
+}
+
+// Lightweight markdown → JSX (headings, bullets, numbered, bold, code, links,
+// blank-line spacing). Professional rendering for ALL assistant replies.
+function MarkdownText({ text }) {
+  const lines = (text || '').split('\n');
+  const blocks = [];
+  let list = null;
+  const flush = (key) => {
+    if (list) {
+      blocks.push(<ul key={`ul-${key}`} className="list-disc pl-5 space-y-1 my-1">{list}</ul>);
+      list = null;
+    }
+  };
+  lines.forEach((line, idx) => {
+    const t = line.trim();
+    if (/^#{1,6}\s/.test(t)) {
+      flush(idx);
+      blocks.push(
+        <div key={idx} className="font-bold text-cyan-200 mt-2 mb-1">
+          {renderInline(t.replace(/^#{1,6}\s/, ''), idx)}
+        </div>
+      );
+    } else if (/^[-*•]\s+/.test(t)) {
+      (list = list || []).push(<li key={idx}>{renderInline(t.replace(/^[-*•]\s+/, ''), idx)}</li>);
+    } else if (t === '') {
+      flush(idx);
+      blocks.push(<div key={idx} className="h-2" />);
+    } else {
+      flush(idx);
+      blocks.push(<div key={idx}>{renderInline(line, idx)}</div>);
+    }
+  });
+  flush('end');
+  return <div className="text-sm leading-relaxed space-y-1">{blocks}</div>;
 }
 
 function VerificationButtons({ verification, onAction }) {
