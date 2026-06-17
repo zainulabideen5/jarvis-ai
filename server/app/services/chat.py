@@ -1971,13 +1971,37 @@ class ChatService:
             "theek", "sahi", "kardo", "kar"}))
         if explicit_send or pure_yes:
             from app.services.laptop_control.email_sender import EmailSender
+            frm = sess.get("from_account", "")
             ok, msg = await asyncio.to_thread(
                 EmailSender.send, sess["to"], sess["subject"], sess["body"],
-                None, None, None, sess.get("from_account", ""))
+                None, None, None, frm)
+            via = "outlook_com"
+            if not ok:
+                # COM/SMTP nahi chala (jaise NEW OUTLOOK) → insaan ki tarah UI se
+                # bhejo (vision): New mail kholo, account chuno, type karo, Send.
+                vtask = (
+                    "Apne mail app (Outlook — New ya Classic, jo bhi khula/installed "
+                    "hai) mein ek NAYI email INSAAN KI TARAH UI se bhejo:\n"
+                    f"- Bhejne wala account (From): {frm or 'default account'}\n"
+                    f"- To: {sess['to']}\n- Subject: {sess['subject']}\n"
+                    f"- Body:\n{sess['body']}\n\n"
+                    "Steps: 'New mail'/'New email' kholo; agar From/account chunne ka "
+                    f"option ho to '{frm or 'default'}' wala account chuno; To, Subject, "
+                    "Body bharo; phir 'Send' dabao. Bhejne ke baad tasdeeq karo."
+                )
+                vres = await asyncio.to_thread(self._run_vision, vtask)
+                via = "vision_ui"
+                if vres.get("ok"):
+                    ok = True
+                    msg = (f"Email UI se bhej di ({frm or 'default'} se) — "
+                           f"{sess['to']} ko")
+                else:
+                    msg = (f"COM se nahi gayi ({msg}); UI/vision se bhi nahi: "
+                           f"{vres.get('reply', vres.get('error', vres.get('msg','')))}")
             self._email_session = None
             reply = f"{'✅' if ok else '⚠️'} {msg}"
             await self._save_message("assistant", reply, "[]")
-            return {"reply": reply, "actions": [{"action": "send_email",
+            return {"reply": reply, "actions": [{"action": "send_email", "via": via,
                     "status": "success" if ok else "failed"}]}
         # Saaf NAYA unrelated command (app/system/search/sawal)? → draft chhod ke
         # normal routing (taake "outlook kholo" jaisi cheez hijack na ho).
