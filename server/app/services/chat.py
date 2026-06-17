@@ -320,6 +320,15 @@ class ChatService:
             total_clients = await db.scalar(select(func.count(Client.id)))
             total_meetings = await db.scalar(sa_text("SELECT COUNT(*) FROM meetings"))
 
+        # User ki current location — JARVIS ise JAANTA hai (browser GPS / IP se).
+        # Isse location-sawal ka seedha jawab do, "access nahi hai" KABHI mat bolo.
+        try:
+            from app.services.environment import get_location
+            _loc = await asyncio.to_thread(get_location)
+            loc_best = _loc.get("best") or "abhi pata nahi (user GPS allow kare)"
+        except Exception:
+            loc_best = "abhi pata nahi"
+
         return f"""
 ### Clients ({total_clients}):
 {clients_text}
@@ -332,6 +341,9 @@ class ChatService:
 
 ### Recent Conversations:
 {trans_text}
+
+### User ki Current Location (JARVIS ko PATA hai — location-sawal ka SEEDHA jawab do, "access nahi" mat bolo):
+{loc_best}
 
 ### Current Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}
 """
