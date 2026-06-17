@@ -58,9 +58,9 @@ Context use kar — agar user kuch send/help/karna chahta, "chai" likely "chahiy
 6. Meetings ke baare mein jawab — "X meeting mein kya hua", "uske tasks kya the", "latest meeting batao" — Recent Meetings block neeche use kar HAR meeting ke title, time, aur uske tasks ke saath jawab dene ke liye. JHOOT mat bol — agar koi specific meeting nahi mili neeche list mein, honestly bol "wo meeting context mein nahi hai".
 
 ## Task Assignment:
-Jab boss bole "ye task Hamza ko de do" ya "1 Ahmed ko, 2 Sara ko":
+Jab boss bole "ye task <name> ko de do" ya "1 <name> ko, 2 <name2> ko":
 ```action
-{"action": "assign_task", "task_id": 1, "assigned_to": "Hamza"}
+{"action": "assign_task", "task_id": 1, "assigned_to": "<name>"}
 ```
 
 Jab naya task banana ho:
@@ -120,13 +120,13 @@ EXAMPLE:
 Context mein:
   - **Muzzamil** (id=23, ...)
       • Review New Design Photos → Aammed [medium]
-      • Send Contract Documents → Sara [medium]
+      • Send Contract Documents → <name2> [medium]
       • Website Finalize → Zeek [urgent]
 
 User: "Muzzamil meeting ke tasks batao"
 Correct reply: "Boss, Muzzamil meeting mein 3 tasks the:
 1. Review New Design Photos — Aammed (medium)
-2. Send Contract Documents — Sara (medium)
+2. Send Contract Documents — <name2> (medium)
 3. Website Finalize — Zeek (urgent) 🔥"
 
 WRONG reply: "context mein nahi hai" — yeh GALAT hai jab Muzzamil clearly listed hai.
@@ -494,7 +494,7 @@ class ChatService:
 
             res = None
             # SPEED: if this is actually a known chat-app send, do it INSTANTLY
-            # via the deterministic path — no slow per-step vision (Zain: "bot
+            # via the deterministic path — no slow per-step vision (the user: "bot
             # late message gaya"). Vision is the fallback only if that fails.
             parsed = self._parse_chat_send(user_message)
             if parsed:
@@ -996,7 +996,7 @@ class ChatService:
         #   "WhatsApp pe Saif ko 'hello' bhej"
         #   "Saif ko WhatsApp pe HELLO bhej"
         #
-        # PATTERN B — body BEFORE send instruction (the case Zain hit):
+        # PATTERN B — body BEFORE send instruction (the case the user hit):
         #   "1. Review Photos\n2. Contract Docs\n3. Website finalize\n
         #    yaha whatsapp kr Zaid Zenesa ko bhai"
         # Trigger words like "yaha"/"yeh"/"ise"/"isko" pinpoint where the
@@ -1200,7 +1200,7 @@ class ChatService:
         # Code-level safety net: if the LLM picked a Roman Urdu pronoun as the
         # recipient (e.g. "Ais", "is", "yeh"), override it by extracting the real
         # name from the original message. This is a hard guarantee — not
-        # dependent on LLM judgment. Works for ANY name (zain/Ahmed/anyone),
+        # dependent on LLM judgment. Works for ANY name (<name>/<name>/anyone),
         # because we filter OUT the closed set of pronouns and prefer anything
         # else (capitalized word OR phone number OR email) as the recipient.
         SEND_ACTIONS = {"send_whatsapp_message", "send_teams_message", "send_email"}
@@ -1581,8 +1581,8 @@ class ChatService:
         before, after = task[:idx], task[idx + 4:]
         _APP = r"whats?\s*app|wa|teams?|slack|discord|telegram|tg|signal|messenger|skype"
         # Roman-Urdu prepositions for on/in — pe/pa/par/mein/me AND ma/mai/may/mn
-        # (Zain writes "whatsapp MA Zain ko" → 'ma' must be stripped or it becomes
-        # part of the contact: "ma Zain Ul" → contact not found).
+        # (the user writes "whatsapp MA the user ko" → 'ma' must be stripped or it becomes
+        # part of the contact: "ma the user Ul" → contact not found).
         _PREP = r"pe|pa|par|pr|mein|mei|me|ma|mai|may|mn|men|may"
         contact = _re.sub(rf"(?i)\b({_APP}|{_PREP})\b", " ", before)
         contact = contact.strip(" ,.'\"")
@@ -1781,8 +1781,8 @@ class ChatService:
             f"{intro} SIRF yeh JSON do:\n"
             '{"is_email": true, "to":"recipient email ya naam", '
             '"from_account":"agar user ne bataya KIS account/email SE bhejna hai '
-            "(jaise 'davina se', 'X account se', ya koi email) to wohi likho, warna "
-            'khali", '
+            "(jaise '<account-naam> se', ya koi poora email-address) to wohi likho, "
+            'warna khali", '
             '"subject":"saaf subject line", "body":"poora email body — greeting, '
             'content, professional sign-off"}\n'
             "Business email = munasib professional tone (aam taur pe English). "
@@ -1892,7 +1892,7 @@ class ChatService:
             for s, sl in zip(smtps, low):
                 if sl == needle:
                     return {"display": s, "send": s}
-            # 2) local-part exact ya start (jaise "davina" -> davinaclaire@...)
+            # 2) local-part exact ya start (e.g. "<short-name>" -> "<short-name>...@...")
             starts = [s for s, sl in zip(smtps, low)
                       if sl.split("@")[0] == needle or sl.startswith(needle)]
             if len(starts) == 1:

@@ -47,14 +47,14 @@ Available actions:
    attachments: list of filenames or paths. Bare filenames laptop pe dhoondhe jaayenge.
    from_account: OPTIONAL sender account hint (only when user explicitly specifies sender).
      Can be:
-       - email substring: "ahmed.business@gmail.com" or "ahmed.business"
+       - email substring: "<name>.business@gmail.com" or "<name>.business"
        - account index: "u/0", "u/1", "0", "1", "first", "second", "2nd", "3rd"
      If user does NOT specify a sender, OMIT this field — Gmail's default (u/0) is used.
-   Example single: "ahmed@example.com ko email bhej subject 'Meeting' body 'Kal 5 baje'"
-   Example multi:  "ahmed@x.com aur sara@y.com dono ko email bhej..."
-   Example file:   "ahmed ko email karo proposal.pdf attached subject 'Proposal'"
-   Example from:   "business wale account se ahmed ko email bhejo"
-                   → {"to": "ahmed", "subject": "...", "body": "...", "from_account": "business"}
+   Example single: "<name>@example.com ko email bhej subject 'Meeting' body 'Kal 5 baje'"
+   Example multi:  "<name>@x.com aur <name2>@y.com dono ko email bhej..."
+   Example file:   "<name> ko email karo proposal.pdf attached subject 'Proposal'"
+   Example from:   "business wale account se <name> ko email bhejo"
+                   → {"to": "<name>", "subject": "...", "body": "...", "from_account": "business"}
    Example index:  "second account se ye email bhejo"
                    → {"to": "...", ..., "from_account": "1"}   (second = index 1, u/1)
    params: {"to": ["email1", "email2"] or "name", "subject": "...", "body": "...", "attachments": ["file1.pdf"], "from_account": "optional"}
@@ -79,7 +79,7 @@ Available actions:
 9. "create_file" — Nayi text/Word/Excel file bana.
    params: {"type": "txt|docx|xlsx", "name": "filename", "content": "...", "location": "desktop|documents|downloads"}
 
-10. "create_folder" — Naya folder bana. Example: "desktop pe naya folder bana zain naam ka"
+10. "create_folder" — Naya folder bana. Example: "desktop pe naya folder bana <name> naam ka"
     params: {"name": "folder name", "location": "desktop|documents|downloads"}
 
 11. "edit_excel" — Excel mein row add. params: {"file": "...", "action": "add_row", "data": ["...", "..."]}
@@ -87,7 +87,7 @@ Available actions:
 12. "move_file" — File move. params: {"source": "...", "dest": "..."}
 
 13. "delete_file" — File ya folder delete. Detect kind from user words.
-    Example: "zain.txt file delete kar" → kind: "file"
+    Example: "<name>.txt file delete kar" → kind: "file"
     Example: "test folder delete kar" → kind: "folder"
     params: {"path": "name or full path", "kind": "file|folder|auto"}
 
@@ -130,7 +130,7 @@ Available actions:
     ⛔ DO NOT use web_search for questions about USER'S OWN data — meetings, tasks, clients,
     calendar events, transcriptions, memory, history. Phrases like "X meeting mein kya hua",
     "kal wali meeting ke tasks batao", "kitne pending tasks hain", "<naam> client kaun hai",
-    "Ahmed ke baare mein batao", "yesterday ka summary" — yeh sab "chat" action hain because
+    "<name> ke baare mein batao", "yesterday ka summary" — yeh sab "chat" action hain because
     the chat brain has local DB context injected (meetings, tasks, clients) and will answer
     directly. NEVER web_search someone's name to look them up — that's the chat AI's job
     using the clients DB.
@@ -147,7 +147,7 @@ Available actions:
     params: {"file_path": "...", "sheet": "", "target_cell": "A11", "formula": "=SUM(D:D)"}
 
 20. "excel_append" — Excel mein nayi row add karo. SILENT.
-    Example: "Excel sales.xlsx mein row add: Ahmed, 5000, paid"
+    Example: "Excel sales.xlsx mein row add: <name>, 5000, paid"
     params: {"file_path": "...", "sheet": "", "row": ["v1","v2","v3"]}
 
 21. "excel_create" — Naya Excel file banao with headers + rows. SILENT.
@@ -161,7 +161,7 @@ Available actions:
     params: {"file_path": "...", "text": "..."}
 
 24. "outlook_send" — Outlook desktop se email bhej. SILENT.
-    Example: "Outlook se Ahmed ko meeting confirm bhej"
+    Example: "Outlook se <name> ko meeting confirm bhej"
     params: {"to": "email or list", "subject": "", "body": "", "cc": "", "attachments": []}
 
 24a. "gmail_detect_accounts" — Chrome mein logged-in Gmail accounts scan karo.
@@ -177,7 +177,7 @@ Available actions:
     params: {}
 
 25. "gmail_send_labeled" — Multi-Gmail accounts mein se label-wise send.
-    Example: "Personal Gmail se Ahmed ko bhej meeting kal 3pm"
+    Example: "Personal Gmail se <name> ko bhej meeting kal 3pm"
     Example: "Work Gmail se client@x.com ko proposal bhej"
     params: {"label": "Personal|Work|Client A|...", "to": "...", "subject": "", "body": "", "attachment": ""}
 
@@ -224,8 +224,8 @@ Output: [{"action":"create_folder","params":{"name":"projects","location":"deskt
 User: "Subhan ko Teams pe message bhej — meeting 5 baje"
 Output: [{"action":"send_teams_message","params":{"recipient":"Subhan","message":"meeting 5 baje"}}]
 
-User: "Teams pe Ahmed ko logo.png bhejo"
-Output: [{"action":"send_teams_message","params":{"recipient":"Ahmed","message":"","attachment":"logo.png"}}]
+User: "Teams pe <name> ko logo.png bhejo"
+Output: [{"action":"send_teams_message","params":{"recipient":"<name>","message":"","attachment":"logo.png"}}]
 
 User: "WhatsApp pe Saif ko resume.pdf bhejo caption 'mera CV'"
 Output: [{"action":"send_whatsapp_message","params":{"recipient":"Saif","message":"mera CV","attachment":"resume.pdf"}}]
@@ -242,8 +242,7 @@ Pronouns (these are NEVER a recipient — they refer to the attached file or a t
   ye image, ye photo, ye document, yaha (when used like "yaha file hai")
 
 The RECIPIENT is the NAME or NUMBER in the message — could be:
-  • Any first name (Ahmed, Sara, Subhan, Hamza, Zain, Saif, Muzzamil, Zaid, Aamir,
-    Kashif, Imran, Anum, Mariam, etc — ANY name)
+  • Koi bhi pehla naam (jo bhi user likhe — KOI specific naam nahi, kuch bhi ho sakta hai)
   • Any business/role label that's in the clients DB
   • A phone number (Pakistani: 03xx, +92xx, or 11 digits)
   • An email address
@@ -253,44 +252,45 @@ Pattern detection:
   "<NAME> ko ye/yeh/is {whatsapp|teams|email} pe bhej"          → recipient = <NAME>
   "{whatsapp|teams|email} pe <NAME> ko ye/is bhejo"             → recipient = <NAME>
 
-Examples (deliberately varied names — pattern matters, not the specific name):
+Examples (placeholders — recipient = jo bhi naam/number message mein ho, usko copy karo;
+naam kuch bhi ho sakta hai, neeche sirf pattern dikhaya hai):
 
-User (with file): "yaha logo ha Ais ko zain ka whatsapp kr da"
-Output: [{"action":"send_whatsapp_message","params":{"recipient":"zain","message":""}}]
+User (with file): "yaha logo ha Ais ko <name> ka whatsapp kr da"
+Output: [{"action":"send_whatsapp_message","params":{"recipient":"<name>","message":""}}]
 
-User (with file): "yeh image Ahmed ko teams pe bhej"
-Output: [{"action":"send_teams_message","params":{"recipient":"Ahmed","message":""}}]
+User (with file): "yeh image <name> ko teams pe bhej"
+Output: [{"action":"send_teams_message","params":{"recipient":"<name>","message":""}}]
 
-User (with file): "is ko Sara ka email kr"
-Output: [{"action":"send_email","params":{"to":"Sara","subject":"(no subject)","body":""}}]
+User (with file): "is ko <name> ka email kr"
+Output: [{"action":"send_email","params":{"to":"<name>","subject":"(no subject)","body":""}}]
 
-User (with file): "yeh contract ha is ko Subhan ka whatsapp pa bhej da"
-Output: [{"action":"send_whatsapp_message","params":{"recipient":"Subhan","message":""}}]
+User (with file): "yeh contract ha is ko <name> ka whatsapp pa bhej da"
+Output: [{"action":"send_whatsapp_message","params":{"recipient":"<name>","message":""}}]
 
-User (with file): "Hamza ko ye file bhejo whatsapp pe"
-Output: [{"action":"send_whatsapp_message","params":{"recipient":"Hamza","message":""}}]
+User (with file): "<name> ko ye file bhejo whatsapp pe"
+Output: [{"action":"send_whatsapp_message","params":{"recipient":"<name>","message":""}}]
 
-User (with file): "ye doc Mariam ko teams pe send kar"
-Output: [{"action":"send_teams_message","params":{"recipient":"Mariam","message":""}}]
+User (with file): "ye doc <name> ko teams pe send kar"
+Output: [{"action":"send_teams_message","params":{"recipient":"<name>","message":""}}]
 
-User (with file): "yaha pe pdf ha Kashif ka email kr da"
-Output: [{"action":"send_email","params":{"to":"Kashif","subject":"(no subject)","body":""}}]
+User (with file): "yaha pe pdf ha <name> ka email kr da"
+Output: [{"action":"send_email","params":{"to":"<name>","subject":"(no subject)","body":""}}]
 
-User (with file, phone number): "ye 03001234567 ko whatsapp pe bhej"
-Output: [{"action":"send_whatsapp_message","params":{"recipient":"03001234567","message":""}}]
+User (with file, phone number): "ye <number> ko whatsapp pe bhej"
+Output: [{"action":"send_whatsapp_message","params":{"recipient":"<number>","message":""}}]
 
 User (with file, ONLY pronoun, no name AND no recent recipient in context):
 "is ko bhej do"
 Output: [{"action":"chat","params":{}}]   # ambiguous — fall through to chat to ask for clarification
 
-User: "ahmed@example.com ko email bhej subject 'Meeting' body 'Kal 5 baje aana'"
-Output: [{"action":"send_email","params":{"to":"ahmed@example.com","subject":"Meeting","body":"Kal 5 baje aana"}}]
+User: "<name>@example.com ko email bhej subject 'Meeting' body 'Kal 5 baje aana'"
+Output: [{"action":"send_email","params":{"to":"<name>@example.com","subject":"Meeting","body":"Kal 5 baje aana"}}]
 
-User: "ahmed@x.com aur sara@y.com dono ko email karo proposal.pdf attached subject 'Q4 Proposal' body 'Review kar lijiye'"
-Output: [{"action":"send_email","params":{"to":["ahmed@x.com","sara@y.com"],"subject":"Q4 Proposal","body":"Review kar lijiye","attachments":["proposal.pdf"]}}]
+User: "<name>@x.com aur <name2>@y.com dono ko email karo proposal.pdf attached subject 'Q4 Proposal' body 'Review kar lijiye'"
+Output: [{"action":"send_email","params":{"to":["<name>@x.com","<name2>@y.com"],"subject":"Q4 Proposal","body":"Review kar lijiye","attachments":["proposal.pdf"]}}]
 
-User: "Ahmed ko email bhej proposal.pdf"
-Output: [{"action":"send_email","params":{"to":"Ahmed","subject":"Proposal","body":"","attachments":["proposal.pdf"]}}]
+User: "<name> ko email bhej proposal.pdf"
+Output: [{"action":"send_email","params":{"to":"<name>","subject":"Proposal","body":"","attachments":["proposal.pdf"]}}]
 
 User: "Trello pe Doing list mein 'Fix login bug' card banao"
 Output: [{"action":"trello_create_card","params":{"title":"Fix login bug","list":"Doing"}}]
@@ -337,7 +337,7 @@ Output: [{"action":"chat","params":{}}]
 User: "kal wali meeting ke tasks batao"
 Output: [{"action":"chat","params":{}}]
 
-User: "Ahmed kaun hai" (a client lookup, local)
+User: "<name> kaun hai" (a client lookup, local)
 Output: [{"action":"chat","params":{}}]
 
 User: "latest meeting summary do"
@@ -419,8 +419,8 @@ Output: [{"action":"excel_formula","params":{"file_path":"sales.xlsx","sheet":""
 User: "Word mein meeting notes likh aur desktop pe notes.docx save kar — content: Action items reviewed"
 Output: [{"action":"word_create","params":{"file_path":"desktop/notes.docx","content":"Action items reviewed","title":""}}]
 
-User: "Outlook se ahmed@x.com ko bhej subject 'Meeting' body 'Kal 3pm pe'"
-Output: [{"action":"outlook_send","params":{"to":"ahmed@x.com","subject":"Meeting","body":"Kal 3pm pe"}}]
+User: "Outlook se <name>@x.com ko bhej subject 'Meeting' body 'Kal 3pm pe'"
+Output: [{"action":"outlook_send","params":{"to":"<name>@x.com","subject":"Meeting","body":"Kal 3pm pe"}}]
 
 User: "Personal Gmail se Ali ko meeting kal 3pm bhej subject 'sync'"
 Output: [{"action":"gmail_send_labeled","params":{"label":"Personal","to":"Ali","subject":"sync","body":"meeting kal 3pm"}}]

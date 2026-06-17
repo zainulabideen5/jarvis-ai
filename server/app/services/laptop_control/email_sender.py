@@ -55,7 +55,7 @@ class EmailSender:
         """Send an email.
 
         to: list of emails OR comma/semicolon-separated string OR single string.
-            Bare names (e.g. "Ahmed") get looked up in clients DB.
+            Bare names (e.g. "<name>") get looked up in clients DB.
         subject: email subject.
         body: email body (plain text; HTML not supported in this minimal version).
         attachments: optional list of file paths or comma-separated string.
