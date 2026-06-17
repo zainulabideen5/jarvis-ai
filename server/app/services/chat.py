@@ -539,13 +539,20 @@ class ChatService:
             # cleanup: minimize the app + bring the dashboard back to front
             await asyncio.to_thread(self._post_send_cleanup, origin)
 
-            reply = f"{'✅' if res.get('ok') else '⚠️'} {res.get('reply', res.get('msg', res.get('error','')))}"
+            if res.get("ok"):
+                reply = f"✅ {res.get('reply', res.get('msg', ''))}"
+                await self._save_message("assistant", reply, "[]")
+                return {"reply": reply, "actions": [{
+                    "action": "vision_task", "status": "success",
+                    "message": res.get("reply", res.get("msg", "")),
+                }]}
+
+            # Vision se NA ho paya → DEAD-END nahi. Claude se helpful jawab (GENERAL —
+            # chahe yeh sawal mis-route hua ho, ya genuine screen-task tha). Kabhi
+            # bhi "vision model ne jawab nahi diya" jaisa dead error nahi.
+            reply = await self._vision_fail_reply(user_message)
             await self._save_message("assistant", reply, "[]")
-            return {"reply": reply, "actions": [{
-                "action": "vision_task",
-                "status": "success" if res.get("ok") else "failed",
-                "message": res.get("reply", res.get("msg", "")),
-            }]}
+            return {"reply": reply, "actions": [{"action": "vision_task", "status": "failed"}]}
 
         # ENGINE-FIRST for compound / in-app tasks. The legacy intent path is
         # great at atomic commands (open app, find file) but mis-handles
@@ -1543,6 +1550,36 @@ class ChatService:
         except Exception:
             pass
         return VisionController.get().run(task)
+
+    async def _vision_fail_reply(self, message: str) -> str:
+        """Vision se na ho paya → DEAD error ke bajaye Claude se HELPFUL jawab
+        (general). Agar yeh actually sawal/baat thi (mis-route) to Claude seedha
+        jawab de dega; genuine screen-task tha to short batayega kaise ho sakta
+        hai. Recent context bhi deta hoon (reference resolve ho)."""
+        ctx = await self._recent_context()
+
+        def _call() -> str:
+            try:
+                from app.services.universal_engine.brain import ClaudeCLIBrain
+                brain = ClaudeCLIBrain(model="opus")
+                if brain.is_available():
+                    sys = (
+                        "Tu JARVIS hai — Roman Urdu + English mix, professional + saaf "
+                        "format. User ne kuch poocha ya karne ko kaha. Agar yeh SAWAL/"
+                        "baat hai to SEEDHA sahi jawab do. Agar koi screen/app KAAM tha "
+                        "jo abhi nahi hua, to short + helpful batao kaise ho sakta hai "
+                        "ya kya chahiye. KABHI dead 'fail/nahi hua' jaisa jawab mat do."
+                    )
+                    convo = (f"Pichli baat-cheet:\n{ctx}\n\n" if ctx else "") + message
+                    txt = brain.ask(sys, [{"role": "user", "content": convo}])
+                    if txt and txt.strip():
+                        return txt.strip()
+            except Exception as e:
+                log.warning("vision_fail_reply_failed", err=str(e)[:120])
+            return ("Boss, yeh main abhi theek se nahi kar paya — thoda clear bata do "
+                    "ya alag tarike se, phir karta hoon.")
+
+        return await asyncio.to_thread(_call)
 
     def _post_send_cleanup(self, origin: str | None) -> None:
         """After ANY app-control task: minimize the app we used + bring the
