@@ -1812,9 +1812,27 @@ class ChatService:
             log.warning("email_llm_groq_failed", err=str(e)[:140])
             return ""
 
-    async def _compose_email(self, instruction: str, force: bool = False) -> dict | None:
+    async def _recent_context(self, n: int = 10) -> str:
+        """Recent chat (last n messages) as text — taake email/action mein
+        'is/woh/usko/<naam>' jaise reference + uska EMAIL conversation se resolve
+        ho jaye (dobara na poochna pade)."""
+        try:
+            hist = await self._load_history()
+        except Exception:
+            return ""
+        lines = []
+        for m in hist[-n:]:
+            role = "User" if m.get("role") == "user" else "JARVIS"
+            c = (m.get("content") or "").strip()
+            if c:
+                lines.append(f"{role}: {c[:300]}")
+        return "\n".join(lines)
+
+    async def _compose_email(self, instruction: str, force: bool = False,
+                             context: str = "") -> dict | None:
         """Instruction se ek PROPER professional email likho. force=True ka matlab
-        yeh email hai hi (clarification ke baad) — sirf likhna hai. Returns
+        yeh email hai hi (clarification ke baad) — sirf likhna hai. context = recent
+        baat-cheet (reference/email resolve karne ke liye). Returns
         {is_email,to,subject,body} ya {need_info,question} ya None."""
         import json as _json
         intro = ("Yeh EMAIL ZAROOR bhejni hai (pehle tay ho chuka). Neeche di gayi "
@@ -1847,7 +1865,13 @@ class ChatService:
             + ("" if force else
                'Agar email BHEJNE ka request hi NAHI (app kholna/sawal/baat) to: '
                '{"is_email": false}\n')
-            + f"\nMaloomat:\n{instruction}\nJSON:"
+            + ("ZAROORI: Agar user 'is/iss/isko/woh/usko/uske/unhe' jaise reference "
+               "de, ya kisi naam ka hawala de jo PICHLI BAAT-CHEET mein aaya, to "
+               "uska POORA EMAIL wahin se resolve karke 'to' mein daalo — recipient "
+               "dobara MAT pucho.\n" if context else "")
+            + (f"\nPICHLI BAAT-CHEET (reference + email yahan se resolve karo):\n"
+               f"{context}\n" if context else "")
+            + f"\nMaloomat (abhi ka instruction):\n{instruction}\nJSON:"
         )
         txt = await asyncio.to_thread(self._email_llm, prompt)
         if not txt:
@@ -1880,7 +1904,8 @@ class ChatService:
         definitely = bool(addr) and (email_word or send_cue)
         if not (definitely or (email_word and send_cue)):
             return None
-        draft = await self._compose_email(message)
+        ctx = await self._recent_context()
+        draft = await self._compose_email(message, context=ctx)
         if not draft:
             # @address tha → yeh pakka email-send hai; vision pe MAT phenko, pucho
             if addr:
@@ -1988,7 +2013,8 @@ class ChatService:
             addr2 = _re.search(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", message)
             to = sess.get("to") or (addr2.group(0) if addr2 else "")
             combined = f"{sess.get('instruction','')}\n\nBoss ne yeh detail di: {message}"
-            new = await self._compose_email(combined, force=True)
+            ctx = await self._recent_context()
+            new = await self._compose_email(combined, force=True, context=ctx)
             if not new:
                 # compose fail — vision pe MAT phenko, dobara saaf pucho
                 reply = ("📧 Boss, theek se samajh nahi paaya — email mein EXACTLY kya "
