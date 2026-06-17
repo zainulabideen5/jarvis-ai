@@ -669,6 +669,22 @@ export default function ChatPage() {
           onChange={handleFilesSelected}
           className="hidden"
         />
+        <button
+          onClick={() => sendMessage('undo karo')}
+          disabled={loading}
+          title="Undo — pichla file/folder kaam ulta"
+          className="px-3 py-2 rounded-xl text-sm bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-colors disabled:opacity-50"
+        >
+          ↩️
+        </button>
+        <button
+          onClick={() => sendMessage('redo karo')}
+          disabled={loading}
+          title="Redo — undo kiya hua dobara"
+          className="px-3 py-2 rounded-xl text-sm bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-colors disabled:opacity-50"
+        >
+          ↪️
+        </button>
         <textarea
           ref={inputRef}
           rows={1}
