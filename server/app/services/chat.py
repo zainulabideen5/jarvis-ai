@@ -538,6 +538,17 @@ class ChatService:
         # → web_search se REAL jawab chat mein (vision NAHI). Screen/app KAAM → vision.
         # Warna → Claude chat (general knowledge/baat).
         route = await self._route_intent(user_message)
+        # Brain ne (KISI BHI language mein) system/location/undo/redo samajh liya
+        # — fast regex miss ho gaya tha (dusri language). Ab sahi handler chalao.
+        if route == "system_info":
+            return await self._run_system_info(None)
+        if route == "location":
+            loc_ans = await self._run_own_location()
+            if loc_ans is not None:
+                return loc_ans
+            # location abhi pata nahi → neeche normal flow (GPS allow/etc.)
+        if route in ("undo", "redo"):
+            return await self._run_undo_redo(route == "redo")
         if route == "search" and not self._is_vision_request(user_message):
             from app.services.laptop_control.apps import AppController
             import datetime as _dt
@@ -1597,30 +1608,33 @@ class ChatService:
             return False           # safe default: treat as answer (don't auto-act)
 
     async def _route_intent(self, message: str) -> str:
-        """3-way router (GENERAL, no keyword hardcode):
-        - 'do'     = screen/app KAAM (app kholo, message/file bhejo, click/fill/
-                     navigate, order/buy/cart/checkout, control) YA user ka APNA
-                     private logged-in data padhna (stripe/bank/email inbox/dashboard).
-        - 'search' = PUBLIC web INFO chahiye jo badalti hai/model ko pakka nahi pata —
-                     restaurant menu, price/rate, reviews, news, address, details,
-                     'X ke baare mein'.
-        - 'answer' = general knowledge jo model khud jaanta hai, ya aam baat-cheet.
-        Default 'answer' (safe). Claude chat phir bhi web_search action de sakta hai."""
+        """LANGUAGE-AGNOSTIC intent classifier (brain samajhta hai — keyword match
+        NAHI). User KISI BHI language/script mein likhe (Urdu, English, Arabic,
+        Hindi, French, Spanish, koi bhi), matlab ke hisaab se EK intent deta hai:
+        do | search | answer | system_info | location | undo | redo.
+        Default 'answer' (safe). Claude chat phir bhi web_search de sakta hai."""
         prompt = (
-            "User ke message ko EK category do. SIRF JSON: "
-            '{"route":"do|search|answer"}\n'
-            "- do = computer/app/web pe KAAM (app kholo, message/file bhejo, click/"
-            "fill/navigate, order/buy/cart/checkout, app control), YA user ke APNE "
-            "private logged-in data ko khol ke padhna (stripe/bank/email inbox/dashboard).\n"
-            "- search = PUBLIC web INFO chahiye jo model ko pakka nahi pata ya badalti "
-            "hai — restaurant ka menu, kisi cheez/jagah ka price/rate, reviews, news, "
-            "kisi DOOSRI jagah ka address, 'X ke baare mein', latest details.\n"
-            "- answer = general knowledge jo model KHUD jaanta hai, aam baat-cheet, YA "
-            "user ki APNI current LOCATION / 'main kahan hoon' / 'meri location' "
-            "(JARVIS ko yeh pehle se context mein pata hai — iske liye web search MAT "
-            "karo, answer do).\n\n"
+            "Tu ek intent classifier hai. User KISI BHI language ya script mein likh "
+            "sakta hai (Roman Urdu, English, Arabic, Hindi/Devanagari, French, Spanish, "
+            "Chinese — koi bhi). LAFZ match MAT kar — MATLAB samajh kar EK category de. "
+            "SIRF JSON do: {\"route\":\"...\"}\n"
+            "Categories:\n"
+            "- do = computer/app/web pe KAAM karna (app/website kholna, message/file "
+            "bhejna, click/type/fill/navigate, order/buy/cart/checkout, app control), YA "
+            "user ka APNA private logged-in data khol ke padhna (stripe/bank/email inbox/dashboard).\n"
+            "- search = PUBLIC web INFO jo model ko pakka nahi pata ya badalti rehti hai — "
+            "menu, kisi cheez/jagah ka price/rate, reviews, news, kisi DOOSRI jagah ka "
+            "address, latest details, 'X ke baare mein'.\n"
+            "- system_info = USER ke APNE is computer/laptop ki LIVE hardware stats — "
+            "RAM/memory, disk/storage/space free, CPU/processor load, battery, system specs.\n"
+            "- location = user ki APNI current location/jagah ('main kahan hoon', 'meri "
+            "location', 'where am I') — JARVIS ko pehle se pata hai.\n"
+            "- undo = pichla file/folder kaam ULTA karna (undo/revert/wapas le aao).\n"
+            "- redo = undo kiya hua DOBARA karna (redo).\n"
+            "- answer = general knowledge jo model KHUD jaanta hai, ya aam baat-cheet.\n\n"
             f"Message: {message}\nJSON:"
         )
+        valid = {"do", "search", "answer", "system_info", "location", "undo", "redo"}
         try:
             client = self._get_client()
             resp = await asyncio.to_thread(lambda: client.chat.completions.create(
@@ -1628,10 +1642,10 @@ class ChatService:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0, max_tokens=20))
             txt = (resp.choices[0].message.content or "").lower()
-            if "search" in txt:
-                return "search"
-            if '"do"' in txt or "'do'" in txt or ": do" in txt or "route: do" in txt:
-                return "do"
+            # Longest labels pehle (taake 'redo' se pehle match na ho jaye galat).
+            for label in ("system_info", "location", "search", "undo", "redo", "do"):
+                if label in txt:
+                    return label
             return "answer"
         except Exception:
             return "answer"
@@ -1679,6 +1693,11 @@ class ChatService:
         )
         if not any(_re.search(c, low) for c in cues):
             return None
+        return await self._run_own_location()
+
+    async def _run_own_location(self) -> dict | None:
+        """Stored location se own-location jawab (detection se alag — brain-router
+        kisi BHI language mein isay seedha chala sake). None agar location pata nahi."""
         from app.services.environment import get_location
         loc = await asyncio.to_thread(get_location)
         best = loc.get("best")
@@ -1741,10 +1760,15 @@ class ChatService:
             want |= {"ram", "disk", "cpu", "battery"}
         if not want:
             return None
+        return await self._run_system_info(want)
+
+    async def _run_system_info(self, want: set[str] | None = None) -> dict:
+        """System stats gather + format (detection se alag — taake brain-router
+        kisi BHI language mein bhi isay seedha chala sake). want=None → sab."""
         from app.services.laptop_control.system_info import (
             get_system_info, format_system_info)
         info = await asyncio.to_thread(get_system_info)
-        reply = format_system_info(info, want)
+        reply = format_system_info(info, want or {"ram", "disk", "cpu", "battery"})
         await self._save_message("assistant", reply, "[]")
         return {"reply": reply, "actions": [{"action": "system_info",
                 "status": "success" if info.get("ok") else "failed"}]}
@@ -1759,6 +1783,11 @@ class ChatService:
             r"\bundo\b|wapas\s*(le\s*aao|karo|kar\s*do|kr\s*do|laao)", low))
         if not (is_undo or is_redo):
             return None
+        return await self._run_undo_redo(is_redo)
+
+    async def _run_undo_redo(self, is_redo: bool) -> dict:
+        """Undo/redo execute (detection se alag — brain-router kisi BHI language
+        mein isay seedha chala sake)."""
         from app.services.undo_history import UndoHistory
         r = await asyncio.to_thread(UndoHistory.redo if is_redo else UndoHistory.undo)
         icon = ("↪️" if is_redo else "↩️") if r.get("ok") else "⚠️"
