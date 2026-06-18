@@ -162,18 +162,29 @@ def _reverse_geocode(lat: float, lon: float) -> dict | None:
     """lat/long ko area+city mein badlo — OpenStreetMap Nominatim (free, no key)."""
     import urllib.request
     try:
+        # zoom=18 = building/street level (zoom=16 sirf suburb-level naam deta tha).
         url = (f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}"
-               f"&lon={lon}&zoom=16&addressdetails=1&accept-language=en")
+               f"&lon={lon}&zoom=18&addressdetails=1&accept-language=en")
         req = urllib.request.Request(url, headers={"User-Agent": "JARVIS-Assistant/1.0"})
         with urllib.request.urlopen(req, timeout=8) as r:
             d = json.loads(r.read().decode())
         a = d.get("address", {}) or {}
-        area = (a.get("suburb") or a.get("neighbourhood") or a.get("residential")
-                or a.get("quarter") or a.get("road") or "")
+        road = a.get("road") or ""
+        hood = (a.get("neighbourhood") or a.get("residential")
+                or a.get("quarter") or "")
+        suburb = a.get("suburb") or ""
         city = (a.get("city") or a.get("town") or a.get("state_district")
                 or a.get("county") or a.get("state") or "")
-        display = ", ".join([p for p in (area, city, a.get("country")) if p]) \
-            or d.get("display_name", "")
+        # Sabse specific label (road > mohalla > suburb).
+        area = road or hood or suburb
+        # Fine-grained display: road, mohalla, suburb, city, country — deduped,
+        # specific-se-general. Pehle sirf suburb+city aata tha (motā).
+        parts: list[str] = []
+        for p in (road, hood, suburb, city, a.get("country")):
+            p = (p or "").strip()
+            if p and p not in parts:
+                parts.append(p)
+        display = ", ".join(parts) or d.get("display_name", "")
         return {"area": area, "city": city, "display": display}
     except Exception as e:
         log.warning("reverse_geocode_failed", error=str(e)[:120])
