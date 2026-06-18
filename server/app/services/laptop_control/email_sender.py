@@ -103,17 +103,21 @@ class EmailSender:
                 )
                 if r_oc.get("ok"):
                     via = r_oc.get("from_account")
-                    src = f" ({via} se)" if via else " (via Outlook desktop)"
-                    note = ""
+                    to_str = ", ".join(oc_emails)
+                    # HONEST: agar warning hai (jaise chune account se nahi gayi)
+                    # to green "bhej diya" nahi — saaf ⚠️ se issue batao.
                     if r_oc.get("warning"):
-                        note = f" — note: {r_oc['warning']}"
-                    return True, f"Email bhej diya {', '.join(oc_emails)} ko{src}{note}"
+                        return True, (f"⚠️ Email {to_str} ko chali to gayi, LEKIN: "
+                                      f"{r_oc['warning']}. (Yani aapke chune account se "
+                                      "nahi gayi — zaroorat ho to woh account Outlook "
+                                      "mein add karein.)")
+                    src = f" ({via} se)" if via else " (via Outlook desktop)"
+                    return True, f"✅ Email bhej diya {to_str} ko{src}"
                 # COM ATTEMPT hua par fail — SMTP pe MAT giro (double-send / galat
                 # recipient ka risk). Honest failure return karo.
                 log.info("outlook_com_attempt_failed", error=r_oc.get("error", ""))
-                return False, ("Outlook desktop se nahi bhej paya: "
-                               f"{r_oc.get('error') or 'unknown error'}. "
-                               "(Double-send se bachne ke liye SMTP fallback skip kiya.)")
+                return False, ("❌ Email NAHI gayi — Outlook desktop se nahi bhej paya: "
+                               f"{r_oc.get('error') or 'unknown error'}.")
         except Exception as e:
             log.info("outlook_com_init_fallback", error=str(e)[:200])
 

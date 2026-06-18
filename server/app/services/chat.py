@@ -3002,7 +3002,10 @@ class ChatService:
                     msg = (f"COM se nahi gayi ({msg}); UI/vision se bhi nahi: "
                            f"{vres.get('reply', vres.get('error', vres.get('msg','')))}")
             self._email_session = None
-            reply = f"{'✅' if ok else '⚠️'} {msg}"
+            # msg ke andar already emoji (✅/⚠️/❌) ho to dobara prefix mat karo
+            # (EmailSender honest emoji deta hai). Warna ok ke hisaab se lagao.
+            reply = msg if msg.lstrip()[:1] in ("✅", "⚠️", "❌") else \
+                f"{'✅' if ok else '❌'} {msg}"
             await self._save_message("assistant", reply, "[]")
             return {"reply": reply, "actions": [{"action": "send_email", "via": via,
                     "status": "success" if ok else "failed"}]}
