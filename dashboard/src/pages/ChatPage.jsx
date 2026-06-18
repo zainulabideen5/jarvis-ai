@@ -22,6 +22,10 @@ export default function ChatPage() {
   const [pendingQuestion, setPendingQuestion] = useState(null);
   const [showOtherInput, setShowOtherInput] = useState(false);  // "Other" → inline text field
   const [otherText, setOtherText] = useState('');
+  // Editing a pending message draft (any app) before sending. Tracks which
+  // pending token is open in the editor + the editable text.
+  const [editingToken, setEditingToken] = useState(null);
+  const [editText, setEditText] = useState('');
   const endRef = useRef(null);
   const messagesRef = useRef(null);     // scrollable container
   const prevCountRef = useRef(0);       // detect when a NEW message is added
@@ -290,6 +294,32 @@ export default function ChatPage() {
     }
   };
 
+  // ✏️ Edit — send the edited draft to the backend, which updates the pending
+  // message and returns a fresh draft (with Confirm/Edit/Cancel buttons again).
+  const handleEditSave = async (token) => {
+    const text = editText.trim();
+    if (!text) return;
+    setEditingToken(null);
+    setLoading(true);
+    try {
+      const result = await api.laptopEdit(token, text);
+      setMessages((prev) => [
+        ...prev,
+        { role: 'user', content: `✏️ Edit: ${text}` },
+        {
+          role: 'assistant',
+          content: result.reply,
+          actions: result.actions || [],
+          pending: result.pending || [],
+        },
+      ]);
+    } catch (err) {
+      setMessages((prev) => [...prev, { role: 'assistant', content: `Error: ${err.message}` }]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleStop = async () => {
     try {
       await api.stopTask();
@@ -503,24 +533,64 @@ export default function ChatPage() {
                 </div>
               )}
 
-              {/* Pending confirmation buttons */}
+              {/* Pending confirmation buttons (+ Edit for message drafts, any app) */}
               {msg.pending?.length > 0 && (
-                <div className="mt-3 flex gap-2">
+                <div className="mt-3 flex flex-col gap-2">
                   {msg.pending.map((p, j) => (
-                    <div key={j} className="flex gap-2">
-                      <button
-                        onClick={() => handleConfirm(p.token, 'yes')}
-                        className="px-3 py-1 text-xs bg-green-600 hover:bg-green-500 text-white rounded"
-                      >
-                        ✅ Haan, kar
-                      </button>
-                      <button
-                        onClick={() => handleConfirm(p.token, 'no')}
-                        className="px-3 py-1 text-xs bg-red-600 hover:bg-red-500 text-white rounded"
-                      >
-                        ❌ Cancel
-                      </button>
-                    </div>
+                    editingToken === p.token ? (
+                      // ✏️ Inline editor — message badlo phir Save (re-confirm)
+                      <div key={j} className="flex flex-col gap-2">
+                        <textarea
+                          value={editText}
+                          onChange={(e) => setEditText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleEditSave(p.token); }
+                            if (e.key === 'Escape') setEditingToken(null);
+                          }}
+                          rows={2}
+                          autoFocus
+                          className="w-full px-3 py-2 text-sm bg-gray-900 border border-gray-600 text-white rounded resize-y"
+                          placeholder="Message edit karo…"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleEditSave(p.token)}
+                            className="px-3 py-1 text-xs bg-green-600 hover:bg-green-500 text-white rounded"
+                          >
+                            💾 Save
+                          </button>
+                          <button
+                            onClick={() => setEditingToken(null)}
+                            className="px-3 py-1 text-xs bg-gray-600 hover:bg-gray-500 text-white rounded"
+                          >
+                            ↩️ Wapas
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div key={j} className="flex gap-2">
+                        <button
+                          onClick={() => handleConfirm(p.token, 'yes')}
+                          className="px-3 py-1 text-xs bg-green-600 hover:bg-green-500 text-white rounded"
+                        >
+                          ✅ Bhej do
+                        </button>
+                        {p.editable && (
+                          <button
+                            onClick={() => { setEditingToken(p.token); setEditText(p.message || ''); }}
+                            className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded"
+                          >
+                            ✏️ Edit
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleConfirm(p.token, 'no')}
+                          className="px-3 py-1 text-xs bg-red-600 hover:bg-red-500 text-white rounded"
+                        >
+                          ❌ Cancel
+                        </button>
+                      </div>
+                    )
                   ))}
                 </div>
               )}

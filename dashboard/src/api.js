@@ -118,6 +118,9 @@ export const api = {
   getLaptopActivity: () => fetchJSON('/laptop/activity'),
   laptopConfirm: (token, decision = 'yes') =>
     postJSON('/laptop/confirm', { token, decision }),
+  // Edit a pending message draft (any app) before sending it.
+  laptopEdit: (token, message) =>
+    postJSON('/laptop/edit', { token, message }),
 
   // Verification flow
   getVerificationStatus: () => fetchJSON('/verification/status'),

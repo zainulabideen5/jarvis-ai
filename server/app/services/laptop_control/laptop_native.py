@@ -853,13 +853,16 @@ class LaptopNative:
         """
         opened = self._open_contact_chat(app, contact, off_screen=off_screen)
         if not opened.get("ok"):
-            return opened
+            # PRE-TYPE fail: app/chat khul hi nahi paya (shayad yeh app native path
+            # support nahi karta). Kuch type/send NAHI hua → caller isay engine+vision
+            # ko de sakta hai (koi bhi app) — duplicate ka risk nahi. stage=open.
+            return {**opened, "stage": "open"}
         win, cfg, pag = opened["win"], opened["cfg"], opened["pag"]
         try:
             # focus the COMPOSE box — critical for WebView keyboard focus
             if not self._focus_any(win, cfg["compose"], "Edit") and \
                not self._focus_any(win, cfg["compose"], ""):
-                return {"ok": False,
+                return {"ok": False, "stage": "focus",
                         "error": f"compose box nahi mila — '{contact}' ki chat shayad open nahi hui"}
 
             self.paste_text(message, clear_first=False)
@@ -886,7 +889,9 @@ class LaptopNative:
                 # never read the compose → message MOST LIKELY went (typed+Enter)
                 return {"ok": True, "verified": False,
                         "msg": f"'{message}' {contact} ko bhej diya (verify nahi kar paya — ek nazar confirm kar lena)"}
-            return {"ok": False, "verified": False,
+            # TYPED already (Enter dabaya) — ambiguous. stage=verify: caller dobara
+            # NAHI bhejega (duplicate se bachne ke liye), honest report dega.
+            return {"ok": False, "verified": False, "stage": "verify",
                     "msg": f"'{message}' type to kiya par compose box clear nahi hua — ho sakta hai na gaya ho, zara khud dekh lein"}
         finally:
             # move the window back on-screen so it isn't left parked off-screen

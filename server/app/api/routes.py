@@ -817,6 +817,16 @@ async def laptop_confirm(body: dict):
     return result
 
 
+@router.post("/laptop/edit")
+async def laptop_edit(body: dict):
+    """Edit a pending message draft (any app) before sending — updates the draft
+    text and returns a fresh Confirm/Edit/Cancel draft. Body: {token, message}."""
+    service = _get_chat()
+    token = body.get("token", "")
+    message = body.get("message", "")
+    return await service.edit_pending(token, message)
+
+
 # ===== Universal Engine (UIA + keyboard + PowerShell, Claude CLI brain) =====
 
 @router.get("/engine/status")

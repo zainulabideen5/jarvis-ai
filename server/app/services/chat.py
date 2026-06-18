@@ -1861,6 +1861,22 @@ class ChatService:
             return "telegram"
         return tok
 
+    @staticmethod
+    def _app_label(app: str) -> str:
+        """App ka display naam — general. Known apps ka saaf naam, warna titlecase
+        (DUNIYA ki koi bhi app — kuch hardcoded behavior nahi, sirf pretty label)."""
+        a = (app or "").strip().lower()
+        known = {
+            "whatsapp": "WhatsApp", "wa": "WhatsApp", "whats app": "WhatsApp",
+            "teams": "Teams", "ms teams": "Teams", "microsoft teams": "Teams",
+            "slack": "Slack", "telegram": "Telegram", "tg": "Telegram",
+            "discord": "Discord", "signal": "Signal", "messenger": "Messenger",
+            "instagram": "Instagram", "ig": "Instagram", "skype": "Skype",
+            "email": "Email", "gmail": "Gmail", "outlook": "Outlook",
+            "linkedin": "LinkedIn", "twitter": "Twitter", "x": "X",
+        }
+        return known.get(a, (app or "App").strip().title())
+
     def _parse_chat_send(self, task: str) -> tuple[str, str, str] | None:
         """Parse a clean single-message chat-app send into (app, contact,
         message) for the FAST deterministic native path. Handles both word
@@ -1918,7 +1934,9 @@ class ChatService:
         prompt = (
             "Tu ek chat-send command samajhta hai. User ke text se nikaalo aur "
             "SIRF ye JSON do:\n"
-            '{"app":"whatsapp|teams|slack|discord|telegram|signal|messenger", '
+            '{"app":"jis app/platform pe bhejna hai — whatsapp, teams, slack, '
+            'telegram, discord, signal, messenger, instagram, skype, email, ya '
+            'DUNIYA ki KOI BHI app (jo user ne likha, lowercase)", '
             '"contact":"jis bande/number ko bhejna hai", '
             '"message":"sirf bhejne wala text"}\n'
             "Rules: message = SIRF content (koi verb jaise bhej/message/kr/karo nahi, "
@@ -1937,7 +1955,10 @@ class ChatService:
             )
             txt = (resp.choices[0].message.content or "").strip()
             obj = _json.loads(txt[txt.find("{"):txt.rfind("}") + 1])
-            app = self._detect_chat_app(f" {(obj.get('app') or '').lower()} ")
+            raw_app = (obj.get("app") or "").strip().lower()
+            # Known apps normalize (whatsapp/teams/…); unknown apps pass through
+            # AS-IS so KOI BHI app chale (native fail → engine+vision sambhalega).
+            app = self._detect_chat_app(f" {raw_app} ") or raw_app
             contact = (obj.get("contact") or "").strip()
             message = (obj.get("message") or "").strip()
             if app and contact and message and len(contact) <= 40:
@@ -2573,11 +2594,15 @@ class ChatService:
         attachments: list[str] | None = None,
         needs_confirm: bool = False,
         resume_transcript: list[dict] | None = None,
+        parsed: tuple[str, str, str] | None = None,
     ) -> dict:
         """Run (or queue/resume) a task on the universal engine.
 
         resume_transcript: continue a paused task after the user answered an
             engine clarifying question. `task` is then the user's answer.
+        parsed: (app, contact, message) jo confirm/edit se aaya — agar diya ho to
+            deterministic send isay SEEDHA use karta hai (task-string dobara parse
+            nahi karta — quote/edit ke bugs se bachne ke liye).
         """
         if attachments and not resume_transcript:
             files = ", ".join(attachments)
@@ -2593,8 +2618,39 @@ class ChatService:
         if needs_confirm and not resume_transcript:
             token = f"confirm_{secrets.token_urlsafe(16)}"
             pending = {"action": "universal_task", "params": {"task": task}}
+            # MESSAGE SEND? → app/contact/message nikaal ke SAAF draft dikhao +
+            # Edit support. General: pehle fast regex (common apps), warna LLM
+            # extract (DUNIYA ki KOI BHI app — kuch hardcoded nahi).
+            draft = None
+            if not attachments:
+                parsed = self._parse_chat_send(task)
+                if not parsed:
+                    try:
+                        parsed = await self._llm_extract_send(task)
+                    except Exception:
+                        parsed = None
+                if parsed:
+                    app, contact, message = parsed
+                    pending["params"]["parsed"] = {
+                        "app": app, "contact": contact, "message": message}
+                    draft = {"app": app, "contact": contact, "message": message}
             async with self._pending_lock:
                 self._pending_actions[token] = pending
+            if draft:
+                reply = (
+                    f"📲 **{self._app_label(draft['app'])} → {draft['contact']}**\n\n"
+                    f"> {draft['message']}\n\n"
+                    "Sahi hai Boss? ✅ **Bhej do** · ✏️ **Edit** · ❌ **Cancel**"
+                )
+                return {
+                    "reply": reply,
+                    "actions": [],
+                    "pending": [{
+                        "token": token, "action": pending, "editable": True,
+                        "app": draft["app"], "contact": draft["contact"],
+                        "message": draft["message"],
+                    }],
+                }
             return {
                 "reply": (
                     f"🤖 Yeh task engine se karunga:\n> {task[:200]}\n\n"
@@ -2645,23 +2701,22 @@ class ChatService:
                     log.info("deterministic_file_send_try", app=app, contact=contact, file=file_path)
                     native = await asyncio.to_thread(nat.chat_send_file, app, contact, file_path, "")
             else:
-                # clean pattern → instant regex; warna LLM se samajho (any phrasing)
-                parsed = self._parse_chat_send(task)
-                if not parsed:
-                    parsed = await self._llm_extract_send(task)
+                # confirm/edit se parsed (app,contact,message) aaya → SEEDHA use
+                # (dobara parse nahi — edited message + quotes safe). Warna clean
+                # pattern → instant regex; warna LLM (any phrasing, KOI BHI app).
+                if parsed is None:
+                    parsed = self._parse_chat_send(task)
+                    if not parsed:
+                        parsed = await self._llm_extract_send(task)
                 if parsed:
                     app, contact, message = parsed
                     log.info("deterministic_send_try", app=app, contact=contact, msg=message[:40])
                     native = await asyncio.to_thread(nat.chat_send, app, contact, message)
 
             if native is not None:
-                # Deterministic chat-send is AUTHORITATIVE — it already opened
-                # the chat and typed/sent. NEVER fall to the engine here: the
-                # engine would re-search + re-type = DUPLICATE messages (the
-                # "baar baar search/message" loop + stall the user saw — multiple
-                # salam/hello went out that way). Report the real result instead.
-                await asyncio.to_thread(self._post_send_cleanup, origin)
                 if native.get("ok"):
+                    # Deterministic chat-send is AUTHORITATIVE — already typed/sent.
+                    await asyncio.to_thread(self._post_send_cleanup, origin)
                     return {
                         "reply": f"✅ {native.get('msg', f'{contact} ko bhej diya')}",
                         "actions": [{
@@ -2669,12 +2724,22 @@ class ChatService:
                             "status": "success", "message": native.get("msg", ""),
                         }],
                     }
-                reason = native.get("msg") or native.get("error") or "nahi ho saka"
-                return {
-                    "reply": (f"⚠️ Boss, {reason}. (Dobara bhejne se rok diya taake "
-                              "duplicate message na jaye — zara khud dekh lein.)"),
-                    "actions": [{"action": "chat_send", "status": "failed", "message": reason}],
-                }
+                # PRE-TYPE fail (stage=open/focus): app/chat khul hi nahi paya, kuch
+                # type/send NAHI hua → ENGINE+VISION ko do jo KHUD dekh kar DUNIYA ki
+                # KOI BHI app handle kare. Duplicate ka risk nahi (kuch gaya hi nahi).
+                if native.get("stage") in ("open", "focus"):
+                    log.info("native_pretype_fail_to_engine",
+                             stage=native.get("stage"), file=bool(file_path))
+                    # fall through to the engine below (NO return, NO cleanup yet)
+                else:
+                    # TYPED already (ambiguous/verify) — NEVER retry (duplicate risk).
+                    await asyncio.to_thread(self._post_send_cleanup, origin)
+                    reason = native.get("msg") or native.get("error") or "nahi ho saka"
+                    return {
+                        "reply": (f"⚠️ Boss, {reason}. (Dobara bhejne se rok diya taake "
+                                  "duplicate message na jaye — zara khud dekh lein.)"),
+                        "actions": [{"action": "chat_send", "status": "failed", "message": reason}],
+                    }
 
         from app.services.universal_engine.engine import UniversalEngine
         result = await UniversalEngine.get().run(task, transcript=resume_transcript, origin=origin)
@@ -2724,12 +2789,60 @@ class ChatService:
         """
         self._remember_approved_recipient(pending)
         if pending.get("action") == "universal_task":
-            task = pending.get("params", {}).get("task", "")
-            return await self._run_engine_task(task)  # full ask/result handling
+            params = pending.get("params", {})
+            task = params.get("task", "")
+            # Message-send confirm → stored parsed (app,contact,message) SEEDHA
+            # de do taake send dobara parse na kare (edited text + quotes safe).
+            pd = params.get("parsed") or {}
+            parsed = None
+            if pd.get("contact") and pd.get("message") is not None:
+                parsed = (pd.get("app") or "whatsapp", pd["contact"], pd["message"])
+            return await self._run_engine_task(task, parsed=parsed)  # full ask/result handling
         result = await self._laptop.execute(pending)
         return {
             "reply": f"✅ {result.get('message', 'Done')}",
             "actions": [result],
+        }
+
+    async def edit_pending(self, token: str, new_message: str) -> dict:
+        """User ne ✏️ Edit kiya — pending message-draft ka text badlo aur naya
+        draft (Confirm/Edit/Cancel ke saath) wapas do. Send abhi NAHI hota —
+        sirf draft update hota hai. General: koi bhi app, koi bhi message."""
+        async with self._pending_lock:
+            pending = self._pending_actions.get(token)
+        if not pending or pending.get("action") != "universal_task":
+            return {"reply": "Yeh draft ab available nahi (expire ho gaya). Dobara command do, Boss.",
+                    "actions": []}
+        new_message = (new_message or "").strip()
+        if not new_message:
+            return {"reply": "Edit ke liye naya message khali hai — kuch likho phir bhejo.",
+                    "actions": []}
+        params = pending.setdefault("params", {})
+        pd = dict(params.get("parsed") or {})
+        app = pd.get("app") or "whatsapp"
+        contact = pd.get("contact") or ""
+        pd.update({"app": app, "contact": contact, "message": new_message})
+        # Canonical task string (double-quote = verbatim message; deterministic
+        # path waise bhi parsed seedha use karega, yeh sirf fallback/display).
+        task = f'{contact} ko {app} pe "{new_message}" bhej'
+        async with self._pending_lock:
+            if token in self._pending_actions:
+                self._pending_actions[token]["params"]["parsed"] = pd
+                self._pending_actions[token]["params"]["task"] = task
+                pending = self._pending_actions[token]
+        reply = (
+            f"✏️ Update ho gaya:\n\n"
+            f"📲 **{self._app_label(app)} → {contact}**\n\n"
+            f"> {new_message}\n\n"
+            "Ab sahi hai? ✅ **Bhej do** · ✏️ **Edit** · ❌ **Cancel**"
+        )
+        return {
+            "reply": reply,
+            "actions": [],
+            "pending": [{
+                "token": token, "action": pending, "editable": True,
+                "app": app, "contact": contact, "message": new_message,
+            }],
         }
 
     @staticmethod
