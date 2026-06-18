@@ -183,6 +183,9 @@ class ChatService:
         # Jab command ambiguous ho aur JARVIS ne clarify-sawal pucha — original
         # command yahan park; user ka agla jawab iske saath merge ho kar chalega.
         self._clarify_session: dict | None = None
+        # Pichli baar bheji hui image/PDF ke server-paths — taake agle message
+        # mein "isme kya likha hai" pe dobara attach kiye baghair us file ko dekh sake.
+        self._last_files: list[str] | None = None
 
     def _get_client(self) -> LLMClient:
         if self._client is None:
@@ -422,8 +425,19 @@ class ChatService:
         client = self._get_client()
         attachments = [a for a in (attachments or []) if a]
 
-        # Save user message to DB
-        await self._save_message("user", user_message)
+        # Save user message to DB — agar attachments hain to unka SERVE-URL bhi
+        # actions mein rakho, taake chat HISTORY mein image/file DIKHE (sirf
+        # browser ke local object-URL pe depend na kare, jo reload/poll pe ud jata).
+        user_actions = "[]"
+        if attachments:
+            from pathlib import Path as _P
+            atts = []
+            for a in attachments:
+                p = _P(str(a))
+                atts.append({"url": f"/api/chat/file/{p.parent.name}/{p.name}",
+                             "name": p.name})
+            user_actions = json.dumps([{"attachments": atts}])
+        await self._save_message("user", user_message, user_actions)
 
         # STOP — let the user halt a running task at any time. Set the flag and
         # return immediately; the running engine/vision loop bails next step.
@@ -542,6 +556,8 @@ class ChatService:
         if attachments:
             viewable = [a for a in attachments if self._is_viewable_file(a)]
             if viewable:
+                # Pichli file yaad rakho (agle message mein "isme kya hai" ke liye).
+                self._last_files = viewable
                 # Faisla BRAIN karta hai (keyword NAHI, kisi bhi language mein):
                 # file kisi ko SEND karni hai, ya us file ke BAARE mein pooch raha
                 # hai? Send nahi → JARVIS khud file dekh kar batata hai. Safe
@@ -549,6 +565,12 @@ class ChatService:
                 is_send = await self._file_intent_is_send(user_message)
                 if not is_send:
                     return await self._describe_files(viewable, user_message)
+        elif self._last_files:
+            # Koi nayi file attach nahi, lekin pichli baar image/PDF bheji thi aur
+            # ab user USI ke baare mein pooch raha hai ("isme kya likha hai") →
+            # web-search nahi, USI file ko dobara dekho. Brain decide karta hai.
+            if await self._refers_to_last_file(user_message):
+                return await self._describe_files(self._last_files, user_message)
 
         # EMAIL — confirm/edit a parked draft, ya naya email-send. Apni branch
         # (action-classifier pe depend nahi) taake "email bhejo" kabhi web-search
@@ -1983,6 +2005,35 @@ class ChatService:
                 temperature=0, max_tokens=20))
             txt = (resp.choices[0].message.content or "").lower()
             return "true" in txt and "send" in txt
+        except Exception:
+            return False
+
+    async def _refers_to_last_file(self, message: str) -> bool:
+        """BRAIN decide karta hai (keyword nahi, kisi bhi language): user PICHLI
+        bheji hui image/file ke CONTENT/MATLAB ke baare mein pooch raha hai
+        ('isme kya likha hai', 'yeh padho', 'translate karo', 'kya hai isme')?
+        Send/koi aur baat → False. Shak/fail → False (safe)."""
+        msg = (message or "").strip()
+        if not msg:
+            return False
+        prompt = (
+            "Abhi-abhi user ne chat mein ek IMAGE/FILE bheji thi. Ab uska yeh naya "
+            "message hai. Batao: kya woh USI file/image ke CONTENT/MATLAB ke baare "
+            "mein pooch raha hai (jaise 'isme kya likha/hai', 'yeh padho', "
+            "'translate/summarize karo', 'image mein kya hai')? Agar woh kisi aur "
+            "cheez ki baat kar raha hai (ya file kahin BHEJNE ko keh raha) → false.\n"
+            "User KISI BHI language mein likhe — MATLAB samajh, lafz nahi.\n"
+            "SIRF JSON: {\"about_file\":true|false}\n\n"
+            f"Message: {msg}\nJSON:"
+        )
+        try:
+            client = self._get_client()
+            resp = await asyncio.to_thread(lambda: client.chat.completions.create(
+                model=self._config.groq_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0, max_tokens=20))
+            txt = (resp.choices[0].message.content or "").lower()
+            return "about_file" in txt and "true" in txt
         except Exception:
             return False
 

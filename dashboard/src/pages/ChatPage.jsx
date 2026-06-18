@@ -144,7 +144,14 @@ export default function ChatPage() {
             // poll se usko mat mitao warna user click hi nahi kar payega.
             const lastPrev = prev[prev.length - 1];
             if (lastPrev?.pending?.length > 0) return prev;
-            const next = history.map((m) => ({ role: m.role, content: m.content, actions: m.actions || [] }));
+            const next = history.map((m) => {
+              const msg = { role: m.role, content: m.content, actions: m.actions || [] };
+              // User message ke attachments (server URL) actions mein save hain →
+              // chat mein image/file render karne ke liye nikaal lo.
+              const attEntry = (m.actions || []).find((a) => Array.isArray(a?.attachments));
+              if (attEntry) msg.attachments_preview = attEntry.attachments;
+              return msg;
+            });
             // Kuch badla nahi? to wahi array rakho — bewajah re-render/scroll na ho.
             const same = prev.length === next.length
               && prev[prev.length - 1]?.content === next[next.length - 1]?.content
