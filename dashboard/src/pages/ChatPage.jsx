@@ -604,8 +604,9 @@ export default function ChatPage() {
                 </div>
               )}
 
-              {/* Email draft — Send / Edit / Cancel buttons (professional) */}
-              {msg.actions?.some?.((a) => a.action === 'email_draft' && a.status === 'awaiting_confirm') && (
+              {/* Email draft — Send / Edit / Cancel buttons (sirf active/last draft pe;
+                  send/cancel ke baad gayab) */}
+              {i === messages.length - 1 && msg.actions?.some?.((a) => a.action === 'email_draft' && a.status === 'awaiting_confirm') && (
                 (() => {
                   const ed = msg.actions.find((a) => a.action === 'email_draft');
                   if (emailEditMsg === i) {
@@ -661,8 +662,8 @@ export default function ChatPage() {
                 })()
               )}
 
-              {/* Pending confirmation buttons (+ Edit for message drafts, any app) */}
-              {msg.pending?.length > 0 && (
+              {/* Pending confirmation buttons (+ Edit) — sirf active/last draft pe */}
+              {i === messages.length - 1 && msg.pending?.length > 0 && (
                 <div className="mt-3 flex flex-col gap-2">
                   {msg.pending.map((p, j) => (
                     editingToken === p.token ? (
