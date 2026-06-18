@@ -136,7 +136,7 @@ export const api = {
   stopTask: () => postJSON('/stop', {}),
 
   // Location — send precise browser GPS so JARVIS khud user ki exact location jaane.
-  setGpsLocation: (lat, lon) => postJSON('/location/gps', { lat, lon }),
+  setGpsLocation: (lat, lon, accuracy) => postJSON('/location/gps', { lat, lon, accuracy }),
 
   // Office COM check
   officeCheck: () => fetchJSON('/office/check'),

@@ -66,15 +66,31 @@ export default function ChatPage() {
     return () => clearInterval(id);
   }, []);
 
-  // JARVIS khud user ki PRECISE location jaan le — ek dafa browser GPS (permission
-  // maangega). Deny/unavailable ho to IP-based city fallback already chalta hai.
+  // JARVIS khud user ki PRECISE location jaan le. Laptop pe pehla reading aksar
+  // coarse (IP-level) hota hai; watchPosition se kuch readings le kar sabse
+  // precise wala (sabse chhota accuracy radius) bhejte hain — single cached
+  // reading se behtar. Deny/unavailable ho to IP-based city fallback chalta hai.
   useEffect(() => {
     if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (pos) => { api.setGpsLocation(pos.coords.latitude, pos.coords.longitude).catch(() => {}); },
+    let best = null, sent = false;
+    const flush = () => {
+      if (sent || !best) return;
+      sent = true;
+      api.setGpsLocation(
+        best.coords.latitude, best.coords.longitude, best.coords.accuracy
+      ).catch(() => {});
+    };
+    const id = navigator.geolocation.watchPosition(
+      (pos) => {
+        if (!best || pos.coords.accuracy < best.coords.accuracy) best = pos;
+        if (pos.coords.accuracy <= 100) { flush(); navigator.geolocation.clearWatch(id); }
+      },
       () => { /* denied/unavailable — IP fallback handles it */ },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 600000 }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
+    // 15s baad jo best mila woh bhej do aur watch band kar do.
+    const t = setTimeout(() => { flush(); navigator.geolocation.clearWatch(id); }, 15000);
+    return () => { clearTimeout(t); navigator.geolocation.clearWatch(id); };
   }, []);
 
   const toggleJarvisListening = async () => {

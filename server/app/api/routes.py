@@ -1510,7 +1510,11 @@ async def location_gps(body: dict):
         lon = float((body or {}).get("lon"))
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="lat/lon chahiye (numbers)")
-    return await asyncio.to_thread(set_gps_location, lat, lon)
+    try:
+        accuracy = float((body or {}).get("accuracy"))
+    except (TypeError, ValueError):
+        accuracy = None
+    return await asyncio.to_thread(set_gps_location, lat, lon, accuracy)
 
 
 @router.post("/stop")

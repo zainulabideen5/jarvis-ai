@@ -180,15 +180,20 @@ def _reverse_geocode(lat: float, lon: float) -> dict | None:
         return None
 
 
-def set_gps_location(lat: float, lon: float) -> dict:
+def set_gps_location(lat: float, lon: float, accuracy: float | None = None) -> dict:
     """Dashboard browser ne PRECISE GPS bheja → reverse-geocode + store. Yeh
-    sabse pakka location (city-level IP se behtar). Self-adaptive: har user ka apna."""
+    sabse pakka location (city-level IP se behtar). Self-adaptive: har user ka apna.
+
+    accuracy = browser ka bataya hua radius (meters). Laptop pe yeh aksar bada
+    hota hai (wifi-based) — isay store karte hain taaki jawab mein honestly bata
+    saken ke fix kitna pakka hai."""
     loc = _read_loc()
     geo = _reverse_geocode(lat, lon) or {}
     loc["gps"] = {
         "lat": lat, "lon": lon,
         "area": geo.get("area"), "city": geo.get("city"),
         "display": geo.get("display"), "_ts": time.time(),
+        "accuracy_m": (float(accuracy) if accuracy is not None else None),
     }
     _write_loc(loc)
     log.info("gps_location_set", area=(geo.get("display") or "")[:70])
@@ -210,6 +215,7 @@ def get_location(refresh_ip: bool = False) -> dict:
         "user_set": loc.get("user_set"),                 # precise, user-given
         "ip": loc.get("ip"),                             # approx city (auto)
         "best": gps_best or loc.get("user_set") or (loc.get("ip", {}) or {}).get("city"),
+        "accuracy_m": gps.get("accuracy_m"),             # browser GPS radius (meters); bada = kam pakka
         "note": "GPS sabse pakka; phir user_set; IP sirf city-level. Nearby ke liye 'best' use karo.",
     }
 

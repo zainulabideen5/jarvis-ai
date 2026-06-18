@@ -1678,9 +1678,29 @@ class ChatService:
         if not best:
             return None     # abhi pata nahi → normal flow (shayad GPS allow karna ho)
         gps = loc.get("gps") or {}
+        acc = loc.get("accuracy_m")
+        src_ip = (not gps.get("lat")) and bool((loc.get("ip") or {}).get("city"))
         reply = f"📍 Boss, aap is waqt yahan hain:\n\n**{best}**"
         if gps.get("lat"):
             reply += f"\n\n_(GPS: {gps['lat']:.4f}, {gps['lon']:.4f})_"
+        # HONEST accuracy: laptop pe GPS chip nahi hota, browser wifi/IP se andaza
+        # lagata hai. Agar radius bada hai to saaf bata do ke yeh approximate hai.
+        if src_ip:
+            reply += ("\n\n⚠️ _Yeh sirf **IP-based city-level** andaza hai (browser GPS "
+                      "permission nahi mili). Sahi area ke liye dashboard mein location "
+                      "permission **Allow** kar dein._")
+        elif acc:
+            km = acc / 1000.0
+            if acc <= 150:
+                reply += f"\n\n_(±{int(acc)} m — kaafi pakka)_"
+            elif acc <= 1500:
+                reply += (f"\n\n⚠️ _Andaza ±{int(acc)} m hai — laptop mein asli GPS nahi "
+                          f"hota, browser wifi se lagata hai, is liye area thoda idhar-udhar "
+                          f"ho sakta hai._")
+            else:
+                reply += (f"\n\n⚠️ _Yeh sirf **motā andaza** hai (±{km:.1f} km). Laptop "
+                          f"mein GPS chip nahi hota — browser wifi/IP se guess karta hai, "
+                          f"isliye area ghalat aa sakta hai. Phone pe yeh precise hoti._")
         await self._save_message("assistant", reply, "[]")
         return {"reply": reply, "actions": [{"action": "location", "status": "success"}]}
 
