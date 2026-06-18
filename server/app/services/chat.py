@@ -1704,9 +1704,12 @@ class ChatService:
             "Chinese — koi bhi). LAFZ match MAT kar — MATLAB samajh kar EK category de. "
             "SIRF JSON do: {\"route\":\"...\"}\n"
             "Categories:\n"
-            "- do = computer/app/web pe KAAM karna (app/website kholna, message/file "
-            "bhejna, click/type/fill/navigate, order/buy/cart/checkout, app control), YA "
-            "user ka APNA private logged-in data khol ke padhna (stripe/bank/email inbox/dashboard).\n"
+            "- do = computer/app/web pe KAAM karna — app/website kholna, usme kuch "
+            "likhna/type/add/save, message/file bhejna, click/fill/navigate, order/"
+            "buy/cart/checkout, app control, ya MULTI-STEP kaam ('notepad kholo aur "
+            "yeh likho aur save karo', 'baki kaam karo', 'jo maine bola woh add karo') "
+            "— YA user ka APNA private logged-in data khol ke padhna (stripe/bank/"
+            "email inbox/dashboard).\n"
             "- search = PUBLIC web INFO jo model ko pakka nahi pata ya badalti rehti hai — "
             "menu, kisi cheez/jagah ka price/rate, reviews, news, kisi DOOSRI jagah ka "
             "address, latest details, 'X ke baare mein'.\n"
@@ -1716,9 +1719,12 @@ class ChatService:
             "location', 'where am I') — JARVIS ko pehle se pata hai.\n"
             "- undo = pichla file/folder kaam ULTA karna (undo/revert/wapas le aao).\n"
             "- redo = undo kiya hua DOBARA karna (redo).\n"
-            "- remember = user chahta hai main koi baat YAAD rakhun, YA apne baare "
-            "mein koi durable personal fact/pasand/zaroori detail bata raha hai "
-            "(naam, pasand-napasand, kaam, important info) jo aage kaam aaye.\n"
+            "- remember = user chahta hai main koi FACT/maloomat YAAD (store) rakhun "
+            "taake BAAD mein recall ho — apna naam, pasand, zaroori detail. YEH "
+            "SIRF jab maqsad 'yaad rakhna' ho. Agar user koi KAAM/action karne ko "
+            "keh raha hai (file mein likho, add karo, save karo, baki kaam karo, "
+            "type karo) to woh 'do' hai, remember NAHI — chahe 'jo maine bola' "
+            "jaise lafz bhi hon.\n"
             "- recall = user woh baat pooch raha hai jo usne PEHLE batayi thi, ya "
             "'tujhe kya yaad hai' / 'main ne kya bola tha' type sawaal.\n"
             "- answer = general knowledge jo model KHUD jaanta hai, ya aam baat-cheet.\n\n"
@@ -2428,10 +2434,16 @@ class ChatService:
             brain = ClaudeCLIBrain(model="opus")
             if brain.is_available():
                 txt = brain.ask(
-                    "User kaun sa DESKTOP app/program kholna chahta hai? SIRF us app "
-                    "ka naam do (jaise: notepad, chrome, calculator, vs code, excel, "
-                    "word). Agar yeh app-kholne ka request NAHI hai to sirf 'none'. "
-                    "Koi explanation/extra baat nahi — sirf naam ya 'none'.",
+                    "User kaun sa DESKTOP app/program kholna chahta hai? "
+                    "SIRF us app ka naam do. App DUNIYA ka KOI BHI ho sakta hai "
+                    "(notepad/chrome/calculator sirf misalein hain — koi bhi software, "
+                    "game, tool, jo bhi user kahe). "
+                    "LEKIN: agar app kholne ke ALAWA aur KOI BHI kaam hai (usme kuch "
+                    "likhna/add/save/search/edit/settings, ya 2 ya zyada steps — "
+                    "kaam KUCH BHI ho sakta hai, yeh sirf misalein hain), to 'none' "
+                    "do — taake poora multi-step kaam engine kare, sirf app khol ke "
+                    "na ruke. Agar app-kholne ka request hi NAHI hai to bhi 'none'. "
+                    "Koi explanation nahi — sirf app ka naam ya 'none'.",
                     [{"role": "user", "content": message}])
                 if txt:
                     return txt.strip().strip(".\"'").splitlines()[0][:40]
