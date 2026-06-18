@@ -31,6 +31,9 @@ structlog>=24.0,<26.0
 # Live system info (RAM / disk / CPU / battery) — chat se seedha laptop stats
 psutil>=5.9,<8.0
 
+# Background Excel (.xlsx) write — Excel khole baghair sheet/data save
+openpyxl>=3.1,<4.0
+
 # Browser automation (for laptop_control: WhatsApp/Teams via Chrome CDP)
 playwright>=1.40,<2.0
 

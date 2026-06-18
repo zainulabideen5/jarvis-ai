@@ -89,6 +89,17 @@ kaam BACKGROUND mein, ek hi step mein, save samet ho jaata hai, koi window nahi:
 Sirf jab user KHAAS bole "notepad khol ke saamne dikhao" tab GUI use karo —
 warna hamesha yeh background file-write tareeqa istemal karo.
 
+EXCEL / spreadsheet / table data — bhi BACKGROUND (Excel khole baghair):
+Jab user kahe "Excel mein yeh data daalo / table/sheet bana do / list ko Excel
+mein save karo" — Excel GUI MAT kholo. create_excel se .xlsx SEEDHE disk pe
+banao (background, koi window nahi):
+  • create_excel {{"path": "%USERPROFILE%\\Documents\\<naam>.xlsx",
+    "data": [["Column1","Column2"], ["row1a","row1b"], ...]}}
+  • data = rows ki list (pehli row headers ho sakti hai). User ne jo data diya
+    usko rows mein tod do.
+  • Phir done:true + reply mein poora path batao.
+Sirf jab user KHAAS Excel GUI saamne maange tabhi GUI use karo.
+
 AVAILABLE ACTIONS:
 {TOOLS_DOC}
 

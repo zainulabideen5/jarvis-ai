@@ -396,6 +396,47 @@ def create_file(path: str, content: str = "") -> dict:
         return {"ok": False, "error": str(e)[:300]}
 
 
+def create_excel(path: str, data=None, sheet_name: str = "Sheet1") -> dict:
+    """Excel (.xlsx) file SEEDHE disk pe banao — Excel khole BAGHAIR (BACKGROUND,
+    koi window nahi). General: koi bhi data, kisi bhi user ke laptop pe (openpyxl).
+
+    data: rows ki list. Har row ya to list/tuple (cells) ho, ya dict (keys =
+    column headers — pehli row headers ban jaati hai). UNDOABLE.
+    """
+    import os
+    from app.services.undo_history import UndoHistory
+    try:
+        from openpyxl import Workbook
+    except ImportError:
+        return {"ok": False, "error": "openpyxl install nahi (pip install openpyxl)"}
+    try:
+        path = os.path.abspath(os.path.expandvars(os.path.expanduser(path)))
+        if not path.lower().endswith(".xlsx"):
+            path += ".xlsx"
+        if os.path.exists(path):
+            return {"ok": False, "error": "file pehle se maujood hai"}
+        if os.path.dirname(path):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+        wb = Workbook()
+        ws = wb.active
+        ws.title = (str(sheet_name) or "Sheet1")[:31]
+        rows = data or []
+        if rows and isinstance(rows[0], dict):
+            headers = list(rows[0].keys())
+            ws.append(headers)
+            for d in rows:
+                ws.append([d.get(h, "") for h in headers])
+        else:
+            for r in rows:
+                ws.append(list(r) if isinstance(r, (list, tuple)) else [r])
+        wb.save(path)
+        UndoHistory.record({"kind": "create", "path": path,
+                            "desc": f"excel banai: {os.path.basename(path)}"})
+        return {"ok": True, "path": path, "rows": len(rows)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
 def create_folder(path: str) -> dict:
     """Naya folder banao (UNDOABLE)."""
     import os
@@ -460,6 +501,7 @@ def delete_path(path: str) -> dict:
 
 TOOLS = {
     "create_file": create_file,
+    "create_excel": create_excel,
     "create_folder": create_folder,
     "move_path": move_path,
     "delete_path": delete_path,
@@ -496,7 +538,8 @@ TOOLS_DOC = """
 - resize_window {"title": "...", "width": 1000, "height": 720} — window ko chhota karo agar full-screen ho
 - close_app {"name": "..."} — app band
 - open_url {"url": "https://..."} — user ke default browser mein URL
-- create_file {"path":"...","content":"..."} — nayi file banao (UNDOABLE)
+- create_file {"path":"...","content":"..."} — nayi text file banao (UNDOABLE)
+- create_excel {"path":"...","data":[["Name","Age"],["Zain","25"]],"sheet_name":"Sheet1"} — Excel (.xlsx) SEEDHE banao, Excel khole BAGHAIR (BACKGROUND). data = rows ki list (list-of-lists, ya list-of-dicts jisme keys=columns). Spreadsheet/table/data ke liye YEH use karo — Excel GUI nahi (UNDOABLE)
 - create_folder {"path":"..."} — naya folder banao (UNDOABLE)
 - move_path {"src":"...","dst":"..."} — file/folder move ya rename (UNDOABLE)
 - delete_path {"path":"..."} — file/folder ko RECOVERABLE trash mein bhejo (permanent NAHI) (UNDOABLE)
