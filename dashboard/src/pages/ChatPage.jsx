@@ -211,6 +211,27 @@ export default function ChatPage() {
     setAttachments((prev) => prev.filter((_, i) => i !== idx));
   };
 
+  // Screenshot / image paste — Ctrl+V clipboard se image seedha chat mein.
+  const handlePaste = (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const imgs = [];
+    for (const it of items) {
+      if (it.kind === 'file' && (it.type || '').startsWith('image/')) {
+        const blob = it.getAsFile();
+        if (blob) {
+          const ext = (blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+          const named = new File([blob], blob.name || `screenshot-${Date.now()}.${ext}`, { type: blob.type });
+          imgs.push({ file: named, status: 'pending' });
+        }
+      }
+    }
+    if (imgs.length) {
+      e.preventDefault();   // raw blob text ko input mein paste hone se roko
+      setAttachments((prev) => [...prev, ...imgs]);
+    }
+  };
+
   const sendMessage = async (text, confirmToken = null) => {
     const hasAttachments = attachments.length > 0;
     if (!text.trim() && !hasAttachments) return;
@@ -220,7 +241,13 @@ export default function ChatPage() {
     const userMsg = {
       role: 'user',
       content: displayText,
-      attachments_preview: attachments.map((a) => a.file.name),
+      // Rich preview so the chat SHOWS images inline + file chips for the rest.
+      // Local object URL = instant preview (no server round-trip needed).
+      attachments_preview: attachments.map((a) => ({
+        name: a.file.name,
+        type: a.file.type || '',
+        url: URL.createObjectURL(a.file),
+      })),
     };
     setMessages((prev) => [...prev, userMsg]);
     setInput('');
@@ -499,18 +526,39 @@ export default function ChatPage() {
                 ? <MarkdownText text={msg.content} />
                 : <p className="text-sm whitespace-pre-wrap">{msg.content}</p>}
 
-              {/* Attachment chips on user's own message */}
+              {/* Attachments on user's own message — images show inline, baaki chip */}
               {msg.role === 'user' && msg.attachments_preview?.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-1">
-                  {msg.attachments_preview.map((name, k) => (
-                    <span
-                      key={`${name}-${k}`}
-                      className="text-[11px] px-2 py-0.5 rounded bg-blue-500/30 border border-blue-400/40"
-                      title={name}
-                    >
-                      📎 {name}
-                    </span>
-                  ))}
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {msg.attachments_preview.map((att, k) => {
+                    // Backward-compat: purani history mein att string (sirf naam) tha.
+                    const a = typeof att === 'string' ? { name: att, type: '', url: '' } : att;
+                    const isImg = (a.type || '').startsWith('image/') ||
+                      /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(a.name || '');
+                    if (isImg && a.url) {
+                      return (
+                        <a key={k} href={a.url} target="_blank" rel="noreferrer" title={a.name}>
+                          <img
+                            src={a.url}
+                            alt={a.name}
+                            className="max-h-48 max-w-[220px] rounded-lg border border-blue-400/40 object-cover"
+                          />
+                        </a>
+                      );
+                    }
+                    const isPdf = /\.pdf$/i.test(a.name || '') || a.type === 'application/pdf';
+                    return (
+                      <a
+                        key={k}
+                        href={a.url || undefined}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[11px] px-2 py-1 rounded bg-blue-500/30 border border-blue-400/40 hover:bg-blue-500/40"
+                        title={a.name}
+                      >
+                        {isPdf ? '📄' : '📎'} {a.name}
+                      </a>
+                    );
+                  })}
                 </div>
               )}
 
@@ -708,28 +756,34 @@ export default function ChatPage() {
       {/* Input */}
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2">
-          {attachments.map((a, i) => (
-            <div
-              key={`${a.file.name}-${i}`}
-              className="flex items-center gap-2 bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-200"
-            >
-              <span>📎</span>
-              <span className="truncate max-w-[180px]" title={a.file.name}>
-                {a.file.name}
-              </span>
-              <span className="text-gray-500">
-                {(a.file.size / 1024).toFixed(0)} KB
-              </span>
-              <button
-                onClick={() => removeAttachment(i)}
-                className="text-gray-500 hover:text-red-400 ml-1"
-                title="Remove"
-                disabled={uploading}
+          {attachments.map((a, i) => {
+            const isImg = (a.file.type || '').startsWith('image/');
+            return (
+              <div
+                key={`${a.file.name}-${i}`}
+                className="flex items-center gap-2 bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-200"
               >
-                ✕
-              </button>
-            </div>
-          ))}
+                {isImg
+                  ? <img src={URL.createObjectURL(a.file)} alt={a.file.name}
+                      className="h-8 w-8 rounded object-cover border border-gray-600" />
+                  : <span>{/\.pdf$/i.test(a.file.name) ? '📄' : '📎'}</span>}
+                <span className="truncate max-w-[180px]" title={a.file.name}>
+                  {a.file.name}
+                </span>
+                <span className="text-gray-500">
+                  {(a.file.size / 1024).toFixed(0)} KB
+                </span>
+                <button
+                  onClick={() => removeAttachment(i)}
+                  className="text-gray-500 hover:text-red-400 ml-1"
+                  title="Remove"
+                  disabled={uploading}
+                >
+                  ✕
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -781,7 +835,8 @@ export default function ChatPage() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={attachments.length > 0 ? `File + message bhejo... (e.g. "Saif ko WhatsApp pe bhejo")` : "Baat karo ya command do... (Shift+Enter = nayi line)"}
+          onPaste={handlePaste}
+          placeholder={attachments.length > 0 ? `File + message bhejo... (e.g. "Saif ko WhatsApp pe bhejo")` : "Baat karo ya command do... (Shift+Enter = nayi line, screenshot paste ho jata hai)"}
           disabled={loading}
           className="flex-1 bg-gray-900 border border-gray-800 rounded-xl px-4 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500 disabled:opacity-50 resize-none"
           style={{ maxHeight: '140px', minHeight: '40px' }}

@@ -141,15 +141,15 @@ def format_system_info(info: dict, want: set[str] | None = None) -> str:
     if "ram" in want and info.get("ram"):
         r = info["ram"]
         lines.append(
-            f"🧠 **RAM:** {r['used_h']} / {r['total_h']} use ho rahi "
+            f"**RAM:** {r['used_h']} / {r['total_h']} use ho rahi "
             f"({r['percent']:.0f}%) — **{r['available_h']} free**"
         )
 
     if "disk" in want and info.get("disks"):
-        lines.append("💾 **Disk space:**")
+        lines.append("**Disk space:**")
         for d in info["disks"]:
             lines.append(
-                f"  • **{d['device'].rstrip(chr(92))}** — {d['free_h']} free / "
+                f"  - **{d['device'].rstrip(chr(92))}** — {d['free_h']} free / "
                 f"{d['total_h']} total ({d['percent']:.0f}% bhari)"
             )
 
@@ -164,17 +164,17 @@ def format_system_info(info: dict, want: set[str] | None = None) -> str:
         if c.get("percent") is not None:
             bits.append(f"{c['percent']:.0f}% load")
         if bits:
-            lines.append(f"⚙️ **CPU:** {', '.join(bits)}")
+            lines.append(f"**CPU:** {', '.join(bits)}")
 
     if "battery" in want and info.get("battery"):
         b = info["battery"]
-        plug = "charging 🔌" if b["plugged"] else "battery 🔋"
-        lines.append(f"{('🔋')} **Battery:** {b['percent']}% ({plug})")
+        plug = "charging" if b["plugged"] else "battery"
+        lines.append(f"**Battery:** {b['percent']}% ({plug})")
 
     if info.get("uptime_sec") is not None and want == {"ram", "disk", "cpu", "battery"}:
-        lines.append(f"⏱️ **Uptime:** {_uptime_h(info['uptime_sec'])}")
+        lines.append(f"**Uptime:** {_uptime_h(info['uptime_sec'])}")
 
     if info.get("os"):
-        lines.append(f"🖥️ {info['os']}")
+        lines.append(f"**System:** {info['os']}")
 
     return "\n".join(lines) if lines else "System info khali aaya."

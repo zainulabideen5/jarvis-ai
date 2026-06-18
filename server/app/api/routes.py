@@ -637,7 +637,27 @@ async def chat_upload(file: UploadFile = File(...)):
         "path": str(target.resolve()),
         "filename": original,
         "size": written,
+        # Browser isay <img>/<a> mein dikha sake — chat mein attachment nazar aaye.
+        "url": f"/api/chat/file/{subdir.name}/{original}",
     }
+
+
+@router.get("/chat/file/{subdir}/{name}")
+async def chat_file(subdir: str, name: str):
+    """Serve a previously-uploaded chat file so the dashboard can DISPLAY it
+    (image preview / PDF link). Path is validated to stay inside UPLOAD_DIR —
+    no traversal. Returns 404 if missing."""
+    from fastapi.responses import FileResponse
+    # subdir = uuid hex (strict). name mein traversal/separator/null na ho.
+    if not re.fullmatch(r"[A-Za-z0-9]+", subdir or ""):
+        raise HTTPException(status_code=400, detail="bad path")
+    if (not name) or "\x00" in name or "/" in name or "\\" in name or name in (".", ".."):
+        raise HTTPException(status_code=400, detail="bad name")
+    target = (UPLOAD_DIR / subdir / name).resolve()
+    # Hard guarantee: resolved path UPLOAD_DIR ke andar hi ho (no traversal).
+    if UPLOAD_DIR.resolve() not in target.parents or not target.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+    return FileResponse(str(target))
 
 
 @router.get("/chat/history")

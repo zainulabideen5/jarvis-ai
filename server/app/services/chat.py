@@ -36,6 +36,7 @@ SYSTEM_PROMPT = """Tu ek AI assistant hai jo boss ke liye kaam karta hai. Apna n
 - Lambe jawab ko chhote **headings** (`## ...`) + bullets se sections mein baant.
 - LENGTH KHUD decide kar — na zabardasti chhota, na zabardasti lamba. Simple/seedha sawal → chhota crisp jawab; detailed ya complex cheez → poora structured jawab. **Jitna sawal maange, utna.**
 - HAR HAAL mein layout SAAF + PROFESSIONAL ho (bullets/headings/bold jahan banti ho). Casual tone theek, par format hamesha professional.
+- EMOJIS KAM — professional raho. Zyada se zyada 1 emoji poore jawab mein, aur woh bhi sirf jab waqai zaroori ho. Har line/heading pe emoji MAT lagao (🚀💪✅🔥 jaisi bharmaar nahi).
 
 ## Roman Urdu Shortcuts — IMPORTANT context awareness:
 Pakistani users type ROMAN URDU with abbreviations. These shortcuts ko sahi samjho:
@@ -502,6 +503,21 @@ class ChatService:
             r = await self._resume_open_web(user_message)
             if r is not None:
                 return r
+
+        # IMAGE / FILE DEKHO — user ne image ya PDF chat mein bheji aur kisi ko
+        # SEND karne ko NAHI kaha → JARVIS KHUD file ko dekh kar batata hai usme
+        # kya hai (Claude + Read). Agar send command hai (recipient/platform mila)
+        # to yeh skip — neeche send flow chalega. General: koi bhi file/user/language.
+        if attachments:
+            viewable = [a for a in attachments if self._is_viewable_file(a)]
+            if viewable:
+                # Faisla BRAIN karta hai (keyword NAHI, kisi bhi language mein):
+                # file kisi ko SEND karni hai, ya us file ke BAARE mein pooch raha
+                # hai? Send nahi → JARVIS khud file dekh kar batata hai. Safe
+                # default = describe (fail ho to bhi nuksan nahi).
+                is_send = await self._file_intent_is_send(user_message)
+                if not is_send:
+                    return await self._describe_files(viewable, user_message)
 
         # EMAIL — confirm/edit a parked draft, ya naya email-send. Apni branch
         # (action-classifier pe depend nahi) taake "email bhejo" kabhi web-search
@@ -1795,6 +1811,88 @@ class ChatService:
         await self._save_message("assistant", reply, "[]")
         return {"reply": reply, "actions": [{"action": "redo" if is_redo else "undo",
                 "status": "success" if r.get("ok") else "failed"}]}
+
+    @staticmethod
+    def _is_viewable_file(path: str) -> bool:
+        """Image ya PDF? (JARVIS in ko dekh/padh kar bata sakta hai). General."""
+        p = str(path).lower()
+        return p.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".pdf"))
+
+    async def _file_intent_is_send(self, message: str) -> bool:
+        """User ne file/image bheji — BRAIN decide karta hai (keyword NAHI, kisi
+        bhi language mein): isay kisi ko SEND karna hai (True) ya file ke BAARE
+        mein pooch raha hai/dekhna chahta hai (False). Khali message = sirf dekhna.
+        Fail/shak → False (describe = safe default)."""
+        msg = (message or "").strip()
+        if not msg:
+            return False
+        prompt = (
+            "User ne chat mein ek FILE/IMAGE attach ki hai. Uske text se batao woh "
+            "kya chahta hai. SIRF JSON do: {\"send\":true|false}\n"
+            "- send=true: file kisi BANDE/number/app/email ko BHEJNI/forward karni hai.\n"
+            "- send=false: file ke BAARE mein pooch raha hai ya use dekhna/padhna/"
+            "samajhna chahta hai (jaise 'isme kya hai', 'yeh padho', 'translate karo', "
+            "ya sirf file bheji bina kuch kahe).\n"
+            "User KISI BHI language/script mein likh sakta hai — lafz nahi, MATLAB samajh.\n\n"
+            f"User: {msg}\nJSON:"
+        )
+        try:
+            client = self._get_client()
+            resp = await asyncio.to_thread(lambda: client.chat.completions.create(
+                model=self._config.groq_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0, max_tokens=20))
+            txt = (resp.choices[0].message.content or "").lower()
+            return "true" in txt and "send" in txt
+        except Exception:
+            return False
+
+    async def _describe_files(self, paths: list[str], question: str) -> dict:
+        """User ne image/PDF chat mein bheji aur poocha 'yeh kya hai' → JARVIS KHUD
+        file ko DEKH kar (Claude CLI + Read tool) jawab deta hai. General: koi bhi
+        image/PDF, kisi bhi language ka sawaal. Honest agar dekh na paaye."""
+        reply = await asyncio.to_thread(self._cli_describe_files, paths, question)
+        if not reply:
+            reply = ("Boss, file to mil gayi lekin main abhi ise theek se dekh/padh "
+                     "nahi paya. Zara dobara bhejein.")
+        await self._save_message("assistant", reply, "[]")
+        return {"reply": reply, "actions": [{"action": "describe_file", "status": "success"}]}
+
+    @staticmethod
+    def _cli_describe_files(paths: list[str], question: str) -> str | None:
+        """Claude CLI ko Read tool ke saath chala kar file(s) ka prose jawab. Yehi
+        mechanism vision use karta hai (claude -p --allowedTools Read)."""
+        import shutil
+        import subprocess
+        import json as _json
+        exe = shutil.which("claude.cmd") or shutil.which("claude")
+        if not exe:
+            return None
+        files_block = "\n".join(f"- {p}" for p in paths)
+        q = (question or "").strip() or "Is file/image mein kya hai?"
+        prompt = (
+            "Tu JARVIS hai. Neeche di gayi file(s) ko Read tool se kholo aur DEKH/"
+            "PADH kar user ke sawaal ka jawab do. Image hai to usme jo dikhe (text, "
+            "log, screenshot, cheezein, log) saaf batao; PDF hai to uska matlab/summary "
+            "do. Jawab USI language/tone mein jisme user ne poocha. Professional aur "
+            "to-the-point — faltu emojis nahi. Sirf jawab do, koi tool-talk nahi.\n\n"
+            f"File(s):\n{files_block}\n\nUser ka sawaal: {q}"
+        )
+        try:
+            proc = subprocess.run(
+                [exe, "-p", "--model", "opus", "--output-format", "json",
+                 "--max-turns", "4", "--allowedTools", "Read",
+                 "--strict-mcp-config", "--disallowedTools", "mcp__*"],
+                input=prompt, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=90, shell=False,
+            )
+            if proc.returncode != 0:
+                return None
+            payload = _json.loads((proc.stdout or "").strip())
+            return (payload.get("result") or "").strip() or None
+        except Exception as e:
+            log.warning("cli_describe_failed", err=str(e)[:120])
+            return None
 
     def _run_vision(self, task: str) -> dict:
         """Blocking see→act loop (runs in a thread). Vision = Claude CLI only.
