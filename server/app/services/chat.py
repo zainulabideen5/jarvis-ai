@@ -2404,6 +2404,11 @@ class ChatService:
         info = await self._extract_shopping(message)
         if not info:
             return None
+        # ORDER / interactive (cart/checkout/location set) → static scraper NAHI;
+        # engine + Playwright background browser handle karega (open → location
+        # pooch → menu → add to cart). General: koi bhi store/website.
+        if info.get("want") == "order":
+            return None
         from app.services.shopping import search_products
         res = await asyncio.to_thread(search_products, info["store"], info["query"], 8)
         if not res.get("ok"):
