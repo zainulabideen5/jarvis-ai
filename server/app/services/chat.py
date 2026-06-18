@@ -573,10 +573,12 @@ class ChatService:
                 if fi == "describe":
                     return await self._describe_files(viewable, user_message)
                 # 'send' / 'action' → fall through (attachments engine/send ko milenge)
-        elif self._last_files:
+        elif self._last_files and not getattr(self, "_email_session", None):
             # Koi nayi file attach nahi, lekin pichli baar image/PDF bheji thi aur
             # ab user USI ke baare mein pooch raha hai ("isme kya likha hai") →
             # web-search nahi, USI file ko dobara dekho. Brain decide karta hai.
+            # NOTE: agar EMAIL session chal raha (subject/message ka intezar) to yeh
+            # message uska JAWAB hai — describe MAT karo, neeche email resume hoga.
             if await self._refers_to_last_file(user_message):
                 return await self._describe_files(self._last_files, user_message)
 
@@ -2687,7 +2689,7 @@ class ChatService:
         return "\n".join(lines)
 
     async def _compose_email(self, instruction: str, force: bool = False,
-                             context: str = "") -> dict | None:
+                             context: str = "", has_attachment: bool = False) -> dict | None:
         """Instruction se ek PROPER professional email likho. force=True ka matlab
         yeh email hai hi (clarification ke baad) — sirf likhna hai. context = recent
         baat-cheet (reference/email resolve karne ke liye). Returns
@@ -2727,6 +2729,9 @@ class ChatService:
                "de, ya kisi naam ka hawala de jo PICHLI BAAT-CHEET mein aaya, to "
                "uska POORA EMAIL wahin se resolve karke 'to' mein daalo — recipient "
                "dobara MAT pucho.\n" if context else "")
+            + ("ATTACHMENT user ne PEHLE SE laga di hai — uska file/path/naam KABHI "
+               "MAT pucho, woh email ke saath khud chali jayegi. Sirf subject/body "
+               "ki fikar karo.\n" if has_attachment else "")
             + (f"\nPICHLI BAAT-CHEET (reference + email yahan se resolve karo):\n"
                f"{context}\n" if context else "")
             + f"\nMaloomat (abhi ka instruction):\n{instruction}\nJSON:"
@@ -2766,7 +2771,7 @@ class ChatService:
         if not (definitely or (email_word and send_cue)):
             return None
         ctx = await self._recent_context()
-        draft = await self._compose_email(message, context=ctx)
+        draft = await self._compose_email(message, context=ctx, has_attachment=bool(atts))
         if not draft:
             # @address tha → yeh pakka email-send hai; vision pe MAT phenko, pucho
             if addr:
@@ -2890,7 +2895,8 @@ class ChatService:
             to = sess.get("to") or (addr2.group(0) if addr2 else "")
             combined = f"{sess.get('instruction','')}\n\nBoss ne yeh detail di: {message}"
             ctx = await self._recent_context()
-            new = await self._compose_email(combined, force=True, context=ctx)
+            new = await self._compose_email(combined, force=True, context=ctx,
+                                            has_attachment=bool(sess.get("attachments")))
             if not new:
                 # compose fail — vision pe MAT phenko, dobara saaf pucho
                 reply = ("📧 Boss, theek se samajh nahi paaya — email mein EXACTLY kya "
