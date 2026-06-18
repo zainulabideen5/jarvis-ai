@@ -1715,14 +1715,17 @@ class ChatService:
             "SIRF JSON do: {\"route\":\"...\"}\n"
             "Categories:\n"
             "- do = computer/app/web pe KAAM karna — app/website kholna, usme kuch "
-            "likhna/type/add/save, message/file bhejna, click/fill/navigate, order/"
-            "buy/cart/checkout, app control, ya MULTI-STEP kaam ('notepad kholo aur "
-            "yeh likho aur save karo', 'baki kaam karo', 'jo maine bola woh add karo') "
-            "— YA user ka APNA private logged-in data khol ke padhna (stripe/bank/"
-            "email inbox/dashboard).\n"
-            "- search = PUBLIC web INFO jo model ko pakka nahi pata ya badalti rehti hai — "
-            "menu, kisi cheez/jagah ka price/rate, reviews, news, kisi DOOSRI jagah ka "
-            "address, latest details, 'X ke baare mein'.\n"
+            "likhna/type/add/save, message/file bhejna, click/fill/navigate, "
+            "**kisi cheez ko ORDER/khareed/mangwana (food/product/kuch bhi), cart/"
+            "checkout/booking**, app control, ya MULTI-STEP kaam ('notepad kholo aur "
+            "yeh likho aur save karo', 'baki kaam karo'). ISME yeh BHI: kisi KHAAS "
+            "site/store/app ka LIVE menu/prices/items nikalna (jaise 'Foodinn se "
+            "burger', 'X store se Y ka rate') — kyunki uske liye woh site KHOLNI "
+            "padti hai. YA user ka APNA private logged-in data (stripe/bank/email).\n"
+            "- search = sirf GENERAL maloomat jaanna jiske liye kisi khaas site pe "
+            "jaana zaroori nahi — news, general facts, 'X kya hai / X ke baare mein', "
+            "kisi jagah ka address/weather. (Kisi KHAAS site se order/menu/items = "
+            "'do', search NAHI.)\n"
             "- system_info = USER ke APNE is computer/laptop ki LIVE hardware stats — "
             "RAM/memory, disk/storage/space free, CPU/processor load, battery, system specs.\n"
             "- location = user ABHI PHYSICALLY kahan hai ('main kahan hoon', 'meri "
@@ -2531,13 +2534,16 @@ class ChatService:
             brain = ClaudeCLIBrain(model="opus")
             if brain.is_available():
                 txt = brain.think(
-                    "User kisi WEBSITE / web-app ko BROWSER mein kholna chahta hai? "
-                    "Agar HAAN to SIRF yeh JSON: "
-                    '{"web_open":true,"url":"poora https url (e.g. '
-                    'https://web.whatsapp.com, https://mail.google.com)",'
+                    "User SIRF kisi website/web-app ko apne BROWSER mein KHOLNA/dekhna "
+                    "chahta hai (taake woh khud use kare) — jaise 'youtube kholo', "
+                    "'gmail kholo'? Agar HAAN to SIRF yeh JSON: "
+                    '{"web_open":true,"url":"poora https url",'
                     '"profile":"agar user ne koi chrome profile/account naam bola to '
-                    'wahi, warna khali"}. Agar website-kholne ka request NAHI hai '
-                    '(app kholna, sawal, message bhejna) to {"web_open":false}.',
+                    'wahi, warna khali"}.\n'
+                    "Agar user kisi site se ORDER/khareedna, menu/items/prices/data "
+                    "nikalna, ya koi multi-step kaam chahta hai (sirf 'kholo' nahi) → "
+                    '{"web_open":false} (woh background browser se khud hoga). '
+                    'App kholna/sawal/message bhejna bhi → {"web_open":false}.',
                     [{"role": "user", "content": message}])
                 obj = _json.loads(txt[txt.find("{"):txt.rfind("}") + 1])
                 if obj.get("web_open") and obj.get("url"):

@@ -107,6 +107,11 @@ form bharna, account pe kuch, kuch bhi online — to JARVIS ke APNE web tools
 Playwright browser hai (user ke Chrome se alag, real DOM, reliable). open_url ya
 vision se MAT karo. Yeh har site pe chalta hai — koi site hardcode nahi.
 Tareeqa (kisi bhi site pe same soch):
+  0. Agar site ka URL pata hai to seedha web_open. Agar NAHI pata (jaise koi local
+     brand "Foodinn") to PEHLE background browser mein search karke OFFICIAL site
+     dhoondo: web_open {{"url":"https://duckduckgo.com/?q=<naam> official site order online"}}
+     → web_read → sahi official ordering site ka link chuno (movie/news/wiki NAHI)
+     → us par web_open. Ghalat cheez (documentary/movie) pe waqt zaaya mat karo.
   1. web_open {{"url": "site"}} — site kholo.
   2. web_read {{}} — page parho: text + clickable cheezein + inputs dekho.
   3. Jo karna hai: web_click "<visible text>" (dropdown option/button), web_fill
