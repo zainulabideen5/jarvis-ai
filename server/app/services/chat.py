@@ -579,7 +579,7 @@ class ChatService:
             r = await self._resume_email_session(user_message)
             if r is not None:
                 return r
-        mail = await self._try_email_send(user_message)
+        mail = await self._try_email_send(user_message, attachments)
         if mail is not None:
             return mail
 
@@ -2701,11 +2701,14 @@ class ChatService:
             log.warning("compose_email_parse_failed", err=str(e)[:120])
             return None
 
-    async def _try_email_send(self, message: str) -> dict | None:
+    async def _try_email_send(self, message: str,
+                              attachments: list[str] | None = None) -> dict | None:
         """Email-send branch (action-classifier se independent). Email compose
         karke CONFIRM ke liye park karo. Outlook desktop (silent) se jayegi.
-        None agar yeh email-send nahi hai — caller aage badhe."""
+        attachments: user ne jo file(s) chat mein bheji (PDF waghera) — email ke
+        saath jayengi. None agar yeh email-send nahi hai — caller aage badhe."""
         import re as _re
+        atts = [a for a in (attachments or []) if a]
         low = message.lower()
         addr = _re.search(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", message)
         # "email/gmail" word (outlook NAHI — woh kholne ke liye bhi hota hai)
@@ -2723,7 +2726,7 @@ class ChatService:
             # @address tha → yeh pakka email-send hai; vision pe MAT phenko, pucho
             if addr:
                 self._email_session = {"stage": "gather", "instruction": message,
-                                       "to": addr.group(0)}
+                                       "to": addr.group(0), "attachments": atts}
                 reply = (f"📧 Boss, {addr.group(0)} ko kya bhejun? Subject/baat batao "
                          "to email bana ke confirm ke liye dikha dunga.")
                 await self._save_message("assistant", reply, "[]")
@@ -2733,13 +2736,15 @@ class ChatService:
         # GUESS nahi — agar detail missing hai to Boss se sawal pucho
         if draft.get("need_info"):
             q = draft.get("question") or "Boss, email ke liye thodi detail chahiye — kya likhun?"
-            self._email_session = {"stage": "gather", "instruction": message, "to": to}
+            self._email_session = {"stage": "gather", "instruction": message,
+                                   "to": to, "attachments": atts}
             await self._save_message("assistant", f"🤔 {q}", "[]")
             return {"reply": f"🤔 {q}", "awaiting_input": True,
                     "options": draft.get("options") or [],
                     "actions": [{"action": "email_clarify", "status": "awaiting_input"}]}
         if not to:
-            self._email_session = {"stage": "gather", "instruction": message, "to": ""}
+            self._email_session = {"stage": "gather", "instruction": message,
+                                   "to": "", "attachments": atts}
             reply = "📧 Boss, kis ko email bhejni hai? Email address ya client ka naam batao."
             await self._save_message("assistant", reply, "[]")
             return {"reply": reply, "actions": [], "awaiting_input": True}
@@ -2748,18 +2753,24 @@ class ChatService:
         frm = (draft.get("from_account") or "").strip()
         res = await asyncio.to_thread(self._resolve_from_account, frm)
         self._email_session = {"stage": "confirm", "to": to, "subject": subject,
-                               "body": body, "from_account": res["send"]}
-        reply = self._email_confirm_text(to, subject, body, res["display"])
+                               "body": body, "from_account": res["send"],
+                               "attachments": atts}
+        reply = self._email_confirm_text(to, subject, body, res["display"], atts)
         await self._save_message("assistant", reply, "[]")
         return {"reply": reply, "awaiting_input": True,
                 "actions": [{"action": "email_draft", "status": "awaiting_confirm"}]}
 
     @staticmethod
-    def _email_confirm_text(to: str, subject: str, body: str, frm_display: str = "") -> str:
+    def _email_confirm_text(to: str, subject: str, body: str, frm_display: str = "",
+                            attachments: list[str] | None = None) -> str:
+        import os
         lines = ["📧 Boss, yeh email tayyar hai — bhej dun?\n"]
         lines.append(f"**From:** {frm_display or 'default Outlook account'}")
         lines.append(f"**To:** {to}")
         lines.append(f"**Subject:** {subject}")
+        if attachments:
+            names = ", ".join(os.path.basename(str(a)) for a in attachments)
+            lines.append(f"**📎 Attachment:** {names}")
         return ("\n".join(lines) + f"\n\n{body}\n\n"
                 "— 'haan / bhej do' likho to bhej deta hoon. Ya batao kya badalna hai.")
 
@@ -2845,7 +2856,8 @@ class ChatService:
             if new.get("need_info") or not to:
                 q = (new.get("question") if new.get("need_info")
                      else "Boss, kis email/naam ko bhejni hai?")
-                self._email_session = {"stage": "gather", "instruction": combined, "to": to}
+                self._email_session = {"stage": "gather", "instruction": combined,
+                                       "to": to, "attachments": sess.get("attachments") or []}
                 await self._save_message("assistant", f"🤔 {q}", "[]")
                 return {"reply": f"🤔 {q}", "awaiting_input": True,
                         "options": (new.get("options") or []), "actions": []}
@@ -2853,9 +2865,11 @@ class ChatService:
             body = (new.get("body") or "").strip()
             frm = (new.get("from_account") or sess.get("from_account") or "").strip()
             res = await asyncio.to_thread(self._resolve_from_account, frm)
+            _atts = sess.get("attachments") or []
             self._email_session = {"stage": "confirm", "to": to, "subject": subject,
-                                   "body": body, "from_account": res["send"]}
-            reply = self._email_confirm_text(to, subject, body, res["display"])
+                                   "body": body, "from_account": res["send"],
+                                   "attachments": _atts}
+            reply = self._email_confirm_text(to, subject, body, res["display"], _atts)
             await self._save_message("assistant", reply, "[]")
             return {"reply": reply, "awaiting_input": True,
                     "actions": [{"action": "email_draft", "status": "awaiting_confirm"}]}
@@ -2868,22 +2882,30 @@ class ChatService:
         if explicit_send or pure_yes:
             from app.services.laptop_control.email_sender import EmailSender
             frm = sess.get("from_account", "")
+            atts = sess.get("attachments") or None
             ok, msg = await asyncio.to_thread(
                 EmailSender.send, sess["to"], sess["subject"], sess["body"],
-                None, None, None, frm)
+                atts, None, None, frm)
             via = "outlook_com"
             if not ok:
                 # COM/SMTP nahi chala (jaise NEW OUTLOOK) → insaan ki tarah UI se
                 # bhejo (vision): New mail kholo, account chuno, type karo, Send.
+                _att_line = ""
+                if atts:
+                    _att_line = ("- Attachment (zaroor lagao): "
+                                 + ", ".join(atts) + "\n")
                 vtask = (
                     "Apne mail app (Outlook — New ya Classic, jo bhi khula/installed "
                     "hai) mein ek NAYI email INSAAN KI TARAH UI se bhejo:\n"
                     f"- Bhejne wala account (From): {frm or 'default account'}\n"
                     f"- To: {sess['to']}\n- Subject: {sess['subject']}\n"
-                    f"- Body:\n{sess['body']}\n\n"
+                    f"- Body:\n{sess['body']}\n"
+                    f"{_att_line}\n"
                     "Steps: 'New mail'/'New email' kholo; agar From/account chunne ka "
                     f"option ho to '{frm or 'default'}' wala account chuno; To, Subject, "
-                    "Body bharo; phir 'Send' dabao. Bhejne ke baad tasdeeq karo."
+                    "Body bharo; "
+                    + ("attach button se diya gaya file bhi lagao; " if atts else "")
+                    + "phir 'Send' dabao. Bhejne ke baad tasdeeq karo."
                 )
                 vres = await asyncio.to_thread(self._run_vision, vtask)
                 via = "vision_ui"
@@ -2914,7 +2936,8 @@ class ChatService:
             q = new.get("question") or "Boss, thodi aur detail batao?"
             self._email_session = {"stage": "gather", "to": sess["to"],
                                    "instruction": f"Subject: {sess['subject']}\n"
-                                                  f"{sess['body']}\n\nExtra: {message}"}
+                                                  f"{sess['body']}\n\nExtra: {message}",
+                                   "attachments": sess.get("attachments") or []}
             await self._save_message("assistant", f"🤔 {q}", "[]")
             return {"reply": f"🤔 {q}", "awaiting_input": True, "actions": []}
         if new:
