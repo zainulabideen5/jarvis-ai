@@ -3003,8 +3003,9 @@ class ChatService:
                            f"{vres.get('reply', vres.get('error', vres.get('msg','')))}")
             self._email_session = None
             # msg ke andar already emoji (✅/⚠️/❌) ho to dobara prefix mat karo
-            # (EmailSender honest emoji deta hai). Warna ok ke hisaab se lagao.
-            reply = msg if msg.lstrip()[:1] in ("✅", "⚠️", "❌") else \
+            # (EmailSender honest emoji deta hai). startswith — kyunki ⚠️ do-codepoint
+            # emoji hai ([:1] use karne se "✅ ⚠️" double lag jata tha).
+            reply = msg if msg.lstrip().startswith(("✅", "⚠️", "❌")) else \
                 f"{'✅' if ok else '❌'} {msg}"
             await self._save_message("assistant", reply, "[]")
             return {"reply": reply, "actions": [{"action": "send_email", "via": via,
