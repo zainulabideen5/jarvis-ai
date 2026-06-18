@@ -596,7 +596,7 @@ TOOLS_DOC = """
 - open_app {"name": "chrome|teams|whatsapp|notepad|..."} — app launch (khulne ke baad window chhoti ho jaati hai, full-screen nahi)
 - resize_window {"title": "...", "width": 1000, "height": 720} — window ko chhota karo agar full-screen ho
 - close_app {"name": "..."} — app band
-- open_url {"url": "https://..."} — user ke default browser mein URL
+- open_url {"url": "https://..."} — user ke default browser (REAL window) mein URL. SIRF jab user KHAAS bole "mere browser/chrome mein kholo". Web CONTENT/search/order/menu/info ke liye YEH MAT use karo (window khul jati + slow) — niche wale web_* tools (background) use karo.
 ★ WEB tools — JARVIS ka apna ALAG Playwright browser (background). KISI BHI website
   ka kaam (order, booking, form bharna, prices/menu nikalna, account pe kuch karna,
   kuch bhi) inse karo — vision ya open_url se NAHI. Real DOM, reliable, har site pe:
