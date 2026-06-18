@@ -657,7 +657,20 @@ async def chat_file(subdir: str, name: str):
     # Hard guarantee: resolved path UPLOAD_DIR ke andar hi ho (no traversal).
     if UPLOAD_DIR.resolve() not in target.parents or not target.is_file():
         raise HTTPException(status_code=404, detail="file not found")
-    return FileResponse(str(target))
+    # Sahi content-type — warna .jfif/.heic jaise image browser inline render nahi
+    # karta (broken icon). mimetypes inhe nahi jaanta, isliye khud map karo.
+    import mimetypes
+    _IMG = {
+        ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".jpe": "image/jpeg",
+        ".jfif": "image/jpeg", ".jff": "image/jpeg", ".jif": "image/jpeg",
+        ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp",
+        ".bmp": "image/bmp", ".tiff": "image/tiff", ".tif": "image/tiff",
+        ".svg": "image/svg+xml", ".ico": "image/x-icon", ".avif": "image/avif",
+        ".heic": "image/heic", ".heif": "image/heif", ".pdf": "application/pdf",
+    }
+    ext = target.suffix.lower()
+    media = _IMG.get(ext) or mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+    return FileResponse(str(target), media_type=media)
 
 
 @router.get("/chat/history")
