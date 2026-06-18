@@ -180,6 +180,9 @@ class ChatService:
         # here; the user's next message resumes the task from that point.
         self._engine_session: dict | None = None
         self._vision_session: dict | None = None   # paused vision task (asked a question)
+        # Jab command ambiguous ho aur JARVIS ne clarify-sawal pucha — original
+        # command yahan park; user ka agla jawab iske saath merge ho kar chalega.
+        self._clarify_session: dict | None = None
 
     def _get_client(self) -> LLMClient:
         if self._client is None:
@@ -502,6 +505,22 @@ class ChatService:
             )
             return engine_result
 
+        # CLARIFY resume — pichli baar command ambiguous tha, JARVIS ne sawal
+        # pucha; yeh uska jawab hai → original command + jawab merge kar ke aage
+        # chalao (taake guess na karna pade). cancel/chodo → chhod do.
+        just_clarified = False
+        if self._clarify_session is not None:
+            _low = user_message.strip().lower()
+            if _low in ("cancel", "chodo", "rehne do", "chod do", "stop"):
+                self._clarify_session = None
+                reply = "Theek hai Boss, woh chhod diya."
+                await self._save_message("assistant", reply, "[]")
+                return {"reply": reply, "actions": []}
+            _orig = self._clarify_session.get("original", "")
+            self._clarify_session = None
+            user_message = f"{_orig} — {user_message}".strip(" —")
+            just_clarified = True
+
         # PRODUCT PICK — agar abhi maine store ke products dikhaye the aur user
         # ne ek chuna ("2 order karo" / "Gathered wala chahiye"), uska page kholo.
         if getattr(self, "_last_shop", None):
@@ -603,6 +622,16 @@ class ChatService:
                 return {"reply": ans_s.strip(),
                         "actions": [{"action": "web_search", "status": "success"}]}
             # search se kuch na mila → niche Claude chat handle kar lega
+
+        # CLARIFY — action (do) command ambiguous hai? (kaunsi file/kis ko/kaunsa
+        # app/kya?) → GUESS mat karo, chhota sawal pooch lo. Brain decide karta
+        # hai (keyword nahi); sirf tab jab WAQAI zaroori ho. Resume ho chuka ho
+        # (just_clarified) to dobara mat pooch — aage chalo.
+        if route == "do" and not just_clarified and not self._is_vision_request(user_message):
+            clar = await self._maybe_clarify(user_message)
+            if clar is not None:
+                self._clarify_session = {"original": user_message}
+                return clar
 
         # VISION control — screen/app pe kuch KARNA ho (ya explicit "dekh ke/screen se").
         if self._is_vision_request(user_message) or route == "do":
@@ -1836,6 +1865,48 @@ class ChatService:
         await self._save_message("assistant", reply, "[]")
         return {"reply": reply, "actions": [{"action": "redo" if is_redo else "undo",
                 "status": "success" if r.get("ok") else "failed"}]}
+
+    async def _maybe_clarify(self, message: str) -> dict | None:
+        """BRAIN decide karta hai: action command AMAL ke liye clear hai, ya koi
+        ZAROORI cheez missing/ambiguous (kaunsi file/kis ko/kaunsa app/kya)? Clear
+        → None (chalao). Ambiguous → chhota sawal (with options) — GUESS nahi.
+        Sirf tab pooche jab WAQAI zaroori ho (warna user tang ho ga). Keyword nahi,
+        kisi bhi language. Fail/shak → None (clarify kabhi block na kare)."""
+        import json as _json
+        prompt = (
+            "User ne JARVIS ko yeh ACTION command diya. Faisla karo: kya yeh amal "
+            "karne ke liye KAAFI clear hai, ya koi ZAROORI maloomat missing/"
+            "ambiguous hai (jaise kaunsi file/folder, kis BANDE ko, kaunsa app/"
+            "platform, kya exactly bhejna/likhna, kaunsa account)?\n"
+            "AHEM RULE: sirf tab clarify maango jab us maloomat ke BAGHAIR ghalti "
+            "ho sakti ho. Agar reasonably clear hai ya koi sensible default hai → "
+            "clear:true. Faltu sawal mat banao.\n"
+            "User KISI BHI language mein likhe — lafz nahi, MATLAB samajh.\n"
+            "SIRF JSON do:\n"
+            '{"clear":true}  YA  '
+            '{"clear":false,"question":"chhota sawal (user ki language jaisa)",'
+            '"options":["choice1","choice2"]}\n'
+            "options sirf tab jab clear choices banti hon; warna [] do.\n\n"
+            f"Command: {message}\nJSON:"
+        )
+        try:
+            client = self._get_client()
+            resp = await asyncio.to_thread(lambda: client.chat.completions.create(
+                model=self._config.groq_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0, max_tokens=160))
+            txt = (resp.choices[0].message.content or "").strip()
+            obj = _json.loads(txt[txt.find("{"):txt.rfind("}") + 1])
+            if obj.get("clear") is True:
+                return None
+            q = (obj.get("question") or "").strip()
+            if not q:
+                return None     # brain unsure how to ask → block mat karo, chalao
+            opts = [str(o).strip() for o in (obj.get("options") or []) if str(o).strip()][:4]
+            await self._save_message("assistant", q, "[]")
+            return {"reply": q, "actions": [], "options": opts, "awaiting_input": True}
+        except Exception:
+            return None
 
     async def _remember_fact(self, message: str) -> dict:
         """User ki baat se ek SAAF fact nikaal ke per-user memory mein save karo.
