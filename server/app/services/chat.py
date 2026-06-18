@@ -330,7 +330,19 @@ class ChatService:
         except Exception:
             loc_best = "abhi pata nahi"
 
+        # User ki YAAD-DASHT — jo jo usne batane ko kaha (per-user, persistent).
+        # Recall + normal baat-cheet dono mein JARVIS in ko use kar ke jawab de.
+        try:
+            from app.services.user_memory import UserMemory
+            _mems = await UserMemory.all(limit=100)
+            mem_text = "\n".join(f"- {m}" for m in _mems) if _mems else "Abhi kuch yaad nahi."
+        except Exception:
+            mem_text = "Abhi kuch yaad nahi."
+
         return f"""
+### User ke baare mein YAAD rakhi hui baatein (in ko sach maan kar use karo; agar user kuch poochhe jo yahan ho to SEEDHA bata do):
+{mem_text}
+
 ### Clients ({total_clients}):
 {clients_text}
 
@@ -565,6 +577,12 @@ class ChatService:
             # location abhi pata nahi → neeche normal flow (GPS allow/etc.)
         if route in ("undo", "redo"):
             return await self._run_undo_redo(route == "redo")
+        # REMEMBER — user ne koi baat yaad rakhne ko kahi (ya apna fact bataya) →
+        # saaf fact nikaal ke per-user memory mein save karo (har laptop, har user).
+        if route == "remember":
+            return await self._remember_fact(user_message)
+        # recall = jo pehle bataya tha — neeche chat-reply khud handle karega
+        # (memories context mein inject hain). Koi alag branch nahi chahiye.
         if route == "search" and not self._is_vision_request(user_message):
             from app.services.laptop_control.apps import AppController
             import datetime as _dt
@@ -1647,10 +1665,16 @@ class ChatService:
             "location', 'where am I') — JARVIS ko pehle se pata hai.\n"
             "- undo = pichla file/folder kaam ULTA karna (undo/revert/wapas le aao).\n"
             "- redo = undo kiya hua DOBARA karna (redo).\n"
+            "- remember = user chahta hai main koi baat YAAD rakhun, YA apne baare "
+            "mein koi durable personal fact/pasand/zaroori detail bata raha hai "
+            "(naam, pasand-napasand, kaam, important info) jo aage kaam aaye.\n"
+            "- recall = user woh baat pooch raha hai jo usne PEHLE batayi thi, ya "
+            "'tujhe kya yaad hai' / 'main ne kya bola tha' type sawaal.\n"
             "- answer = general knowledge jo model KHUD jaanta hai, ya aam baat-cheet.\n\n"
             f"Message: {message}\nJSON:"
         )
-        valid = {"do", "search", "answer", "system_info", "location", "undo", "redo"}
+        valid = {"do", "search", "answer", "system_info", "location",
+                 "undo", "redo", "remember", "recall"}
         try:
             client = self._get_client()
             resp = await asyncio.to_thread(lambda: client.chat.completions.create(
@@ -1658,8 +1682,9 @@ class ChatService:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0, max_tokens=20))
             txt = (resp.choices[0].message.content or "").lower()
-            # Longest labels pehle (taake 'redo' se pehle match na ho jaye galat).
-            for label in ("system_info", "location", "search", "undo", "redo", "do"):
+            # Longest/specific labels pehle (taake substring se galat match na ho).
+            for label in ("system_info", "location", "remember", "recall",
+                          "search", "undo", "redo", "do"):
                 if label in txt:
                     return label
             return "answer"
@@ -1811,6 +1836,44 @@ class ChatService:
         await self._save_message("assistant", reply, "[]")
         return {"reply": reply, "actions": [{"action": "redo" if is_redo else "undo",
                 "status": "success" if r.get("ok") else "failed"}]}
+
+    async def _remember_fact(self, message: str) -> dict:
+        """User ki baat se ek SAAF fact nikaal ke per-user memory mein save karo.
+        General + language-agnostic (brain fact nikaalta hai). Confirm reply deta hai."""
+        fact = await self._extract_memory_fact(message)
+        from app.services.user_memory import UserMemory
+        r = await UserMemory.remember(fact)
+        if r.get("dup"):
+            reply = f"Yeh to pehle se yaad hai: {fact}"
+        elif r.get("ok"):
+            reply = f"Theek hai Boss, yaad rakh liya: {fact}"
+        else:
+            reply = f"Maaf kijiye, ise save nahi kar paya ({r.get('msg', '')})."
+        await self._save_message("assistant", reply, "[]")
+        return {"reply": reply, "actions": [{"action": "remember",
+                "status": "success" if r.get("ok") else "failed"}]}
+
+    async def _extract_memory_fact(self, message: str) -> str:
+        """Brain se ek SAAF, self-contained fact nikaalo jo yaad rakhna hai
+        (third-person, bina 'yaad rakho' jaise verb). Fail → raw message."""
+        prompt = (
+            "User chahta hai main yeh baat YAAD rakhun. Ek SAAF, mukhtasar fact likho "
+            "jo baad mein kaam aaye: third-person, self-contained, bina 'yaad rakho/"
+            "remember' jaise verb ke. User KISI BHI language mein likhe — fact usi "
+            "language mein rakho jisme baat hai. SIRF fact ki ek line do, aur kuch nahi.\n\n"
+            f"User: {message}\nFact:"
+        )
+        try:
+            client = self._get_client()
+            resp = await asyncio.to_thread(lambda: client.chat.completions.create(
+                model=self._config.groq_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0, max_tokens=80))
+            txt = (resp.choices[0].message.content or "").strip().strip('"')
+            lines = [ln.strip() for ln in txt.splitlines() if ln.strip()]
+            return lines[0][:300] if lines else message.strip()
+        except Exception:
+            return message.strip()
 
     @staticmethod
     def _is_viewable_file(path: str) -> bool:
