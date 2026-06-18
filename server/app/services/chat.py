@@ -1715,8 +1715,10 @@ class ChatService:
             "address, latest details, 'X ke baare mein'.\n"
             "- system_info = USER ke APNE is computer/laptop ki LIVE hardware stats — "
             "RAM/memory, disk/storage/space free, CPU/processor load, battery, system specs.\n"
-            "- location = user ki APNI current location/jagah ('main kahan hoon', 'meri "
-            "location', 'where am I') — JARVIS ko pehle se pata hai.\n"
+            "- location = user ABHI PHYSICALLY kahan hai ('main kahan hoon', 'meri "
+            "current location', 'where am I') — GPS/abhi ki jagah. LEKIN 'main kahan "
+            "REHTA hoon / where do I live / mera ghar/sheher' (residence) yeh location "
+            "NAHI — woh 'recall' hai (user ne agar bataya ho to yaad-dasht se).\n"
             "- undo = pichla file/folder kaam ULTA karna (undo/revert/wapas le aao).\n"
             "- redo = undo kiya hua DOBARA karna (redo).\n"
             "- remember = user chahta hai main koi FACT/maloomat YAAD (store) rakhun "
@@ -1781,6 +1783,12 @@ class ChatService:
         sawal nahi."""
         import re as _re
         low = message.lower()
+        # "kahan REHTA hoon / where I LIVE / ghar kahan" = RESIDENCE (yaad-dasht se),
+        # ABHI ki GPS jagah NAHI. Aisa ho to yeh handler chhod do — memory/chat
+        # us stored fact se jawab dega (warna GPS galat de deta tha).
+        if _re.search(r"\b(rehta|rehti|rehte|reh\s*raha|reh\s*rahi|live|living|"
+                      r"reside|residence)\b", low) or _re.search(r"ghar\s+kah", low):
+            return None
         cues = (
             r"where\s+am\s+i",
             r"\b(meri|meree|apni|apne|mera|mere|current)\s+(location|jagah|area|place)\b",
