@@ -527,6 +527,13 @@ class ChatService:
         if loc_ans is not None:
             return loc_ans
 
+        # SYSTEM INFO — "RAM/disk/space/CPU/battery/system info bataa" → JARVIS KHUD
+        # is machine ki ASLI stats padh ke seedha chat mein jawab (kisi command/refusal
+        # ke baghair). General + self-adaptive — har laptop ki apni stats.
+        sys_ans = await self._try_system_info(user_message)
+        if sys_ans is not None:
+            return sys_ans
+
         # ROUTE (3-way, GENERAL): public web-INFO (menu/price/news/details, koi bhi)
         # → web_search se REAL jawab chat mein (vision NAHI). Screen/app KAAM → vision.
         # Warna → Claude chat (general knowledge/baat).
@@ -1703,6 +1710,44 @@ class ChatService:
                           f"isliye area ghalat aa sakta hai. Phone pe yeh precise hoti._")
         await self._save_message("assistant", reply, "[]")
         return {"reply": reply, "actions": [{"action": "location", "status": "success"}]}
+
+    async def _try_system_info(self, message: str) -> dict | None:
+        """User is machine ki live stats pooch raha hai (RAM/disk/space/CPU/battery/
+        system info)? → JARVIS KHUD padh ke seedha jawab. General + self-adaptive —
+        har machine ki apni asli stats, kuch hardcoded nahi. None agar yeh sawal nahi."""
+        import re as _re
+        low = message.lower()
+        # Machine ka context (taaki "space"/"jaga" jaise aam lafz galat trigger na karen).
+        machine_ctx = bool(_re.search(
+            r"\b(laptop|pc|computer|system|disk|drive|storage|hard|ssd|hdd|windows|machine)\b",
+            low))
+        want: set[str] = set()
+        if _re.search(r"\b(ram|memory|memori|memry|raim)\b", low):
+            want.add("ram")
+        if _re.search(r"\b(disk|storage|drive|hdd|ssd|hard\s*disk)\b", low):
+            want.add("disk")
+        if machine_ctx and _re.search(r"\b(space|jagah?|khali)\b", low):
+            want.add("disk")
+        if _re.search(r"\b(cpu|processor|cores?)\b", low):
+            want.add("cpu")
+        if _re.search(r"\b(battery|charging|charge)\b", low):
+            want.add("battery")
+        generic = _re.search(
+            r"system\s*info|sys\s*info|\bspecs?\b|specification|system\s*check|"
+            r"laptop\s*(ki|ka|ke)\s*(info|haal|halat|detail|state)|pc\s*info|"
+            r"laptop\s*me?i?n?\s*kitni",
+            low)
+        if generic:
+            want |= {"ram", "disk", "cpu", "battery"}
+        if not want:
+            return None
+        from app.services.laptop_control.system_info import (
+            get_system_info, format_system_info)
+        info = await asyncio.to_thread(get_system_info)
+        reply = format_system_info(info, want)
+        await self._save_message("assistant", reply, "[]")
+        return {"reply": reply, "actions": [{"action": "system_info",
+                "status": "success" if info.get("ok") else "failed"}]}
 
     async def _try_undo_redo(self, message: str) -> dict | None:
         """'undo karo' / 'redo karo' → reversible file/folder ops ulta / dobara.

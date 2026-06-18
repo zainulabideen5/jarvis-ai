@@ -28,6 +28,9 @@ python-dotenv>=1.0,<2.0
 # Logging
 structlog>=24.0,<26.0
 
+# Live system info (RAM / disk / CPU / battery) — chat se seedha laptop stats
+psutil>=5.9,<8.0
+
 # Browser automation (for laptop_control: WhatsApp/Teams via Chrome CDP)
 playwright>=1.40,<2.0
 
