@@ -26,6 +26,8 @@ export default function ChatPage() {
   // pending token is open in the editor + the editable text.
   const [editingToken, setEditingToken] = useState(null);
   const [editText, setEditText] = useState('');
+  // Image lightbox — chat ke andar full image (X se band), Claude jaisa
+  const [lightboxUrl, setLightboxUrl] = useState(null);
   const endRef = useRef(null);
   const messagesRef = useRef(null);     // scrollable container
   const prevCountRef = useRef(0);       // detect when a NEW message is added
@@ -37,6 +39,14 @@ export default function ChatPage() {
   // otherwise the 5s poll wiped optimistic bubbles + confirm buttons mid-send.
   const loadingRef = useRef(false);
   useEffect(() => { loadingRef.current = loading; }, [loading]);
+
+  // Esc se image lightbox band ho
+  useEffect(() => {
+    if (!lightboxUrl) return;
+    const onKey = (e) => { if (e.key === 'Escape') setLightboxUrl(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lightboxUrl]);
 
   // While a request is in flight, poll the engine's live progress so the
   // user sees what it's doing ("Likh raha hun…") instead of a frozen spinner.
@@ -543,13 +553,14 @@ export default function ChatPage() {
                       /\.(png|jpe?g|jpe|jfif|jff|jif|gif|webp|bmp|tiff?|svg|ico|heic|heif|avif)$/i.test(a.name || '');
                     if (isImg && a.url) {
                       return (
-                        <a key={k} href={a.url} target="_blank" rel="noreferrer" title={a.name}>
-                          <img
-                            src={a.url}
-                            alt={a.name}
-                            className="max-h-48 max-w-[220px] rounded-lg border border-blue-400/40 object-cover"
-                          />
-                        </a>
+                        <img
+                          key={k}
+                          src={a.url}
+                          alt={a.name}
+                          title={a.name}
+                          onClick={() => setLightboxUrl(a.url)}
+                          className="max-h-48 max-w-[220px] rounded-lg border border-blue-400/40 object-cover cursor-zoom-in"
+                        />
                       );
                     }
                     const isPdf = /\.pdf$/i.test(a.name || '') || a.type === 'application/pdf';
@@ -856,6 +867,28 @@ export default function ChatPage() {
           {uploading ? 'Upload...' : 'Send'}
         </button>
       </div>
+
+      {/* Image lightbox — chat ke andar full image, X / backdrop / Esc se band */}
+      {lightboxUrl && (
+        <div
+          onClick={() => setLightboxUrl(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6"
+        >
+          <button
+            onClick={() => setLightboxUrl(null)}
+            title="Band karo (Esc)"
+            className="absolute top-4 right-6 text-white text-4xl leading-none hover:text-red-400"
+          >
+            ×
+          </button>
+          <img
+            src={lightboxUrl}
+            alt="preview"
+            onClick={(e) => e.stopPropagation()}
+            className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain shadow-2xl"
+          />
+        </div>
+      )}
     </div>
   );
 }
