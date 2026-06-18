@@ -1920,19 +1920,24 @@ class ChatService:
         kisi bhi language. Fail/shak → None (clarify kabhi block na kare)."""
         import json as _json
         prompt = (
-            "User ne JARVIS ko yeh ACTION command diya. Faisla karo: kya yeh amal "
-            "karne ke liye KAAFI clear hai, ya koi ZAROORI maloomat missing/"
-            "ambiguous hai (jaise kaunsi file/folder, kis BANDE ko, kaunsa app/"
-            "platform, kya exactly bhejna/likhna, kaunsa account)?\n"
-            "AHEM RULE: sirf tab clarify maango jab us maloomat ke BAGHAIR ghalti "
-            "ho sakti ho. Agar reasonably clear hai ya koi sensible default hai → "
-            "clear:true. Faltu sawal mat banao.\n"
+            "User ne JARVIS ko yeh ACTION command diya. JARVIS bohat kuch KHUD pata "
+            "kar leta hai: apne web browser se KOI BHI website khol kar (order/menu/"
+            "prices/booking), aur screen/app dekh kar. Is liye:\n"
+            "- Agar command SHURU kiya ja sakta hai (site/store/app/cheez ka pata hai, "
+            "jaise 'Foodinn se burger order karo') → clear:true. JARVIS site khol kar "
+            "khud aage barhega aur zaroorat pe BAAD mein khud poochega.\n"
+            "- 'Kaunsa app/platform/site' jaisa sawal MAT maango agar user ne naam de "
+            "diya — woh khud kholega.\n"
+            "- Clarify SIRF tab jab command itna ADHOORA ho ke shuru hi nahi kar "
+            "sakte aur koi cheez na site se na screen se mil sakti (jaise sirf "
+            "'bhejo'/'yeh karo' bina kisi cheez ke, ya message ka TEXT hi nahi diya).\n"
             "User KISI BHI language mein likhe — lafz nahi, MATLAB samajh.\n"
             "SIRF JSON do:\n"
             '{"clear":true}  YA  '
             '{"clear":false,"question":"chhota sawal (user ki language jaisa)",'
             '"options":["choice1","choice2"]}\n'
-            "options sirf tab jab clear choices banti hon; warna [] do.\n\n"
+            "Jab pooch rahe ho to options ZAROOR do (clickable choices) jab banti "
+            "hon; warna [] do.\n\n"
             f"Command: {message}\nJSON:"
         )
         try:
