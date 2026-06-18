@@ -434,7 +434,13 @@ class OfficeCOM:
 
         try:
             import win32com.client
-            outlook = win32com.client.DispatchEx("Outlook.Application")
+            # CHAL RAHE Outlook se attach (user ki LIVE profile = saare accounts).
+            # DispatchEx fresh/default profile kholta tha jisme aksar 1 hi account
+            # hota → from_account match fail ho kar default se chali jaati thi.
+            try:
+                outlook = win32com.client.GetActiveObject("Outlook.Application")
+            except Exception:
+                outlook = win32com.client.DispatchEx("Outlook.Application")
             try:
                 mail = outlook.CreateItem(0)  # 0 = olMailItem
                 mail.To = _join(to)
@@ -494,7 +500,40 @@ class OfficeCOM:
                         except Exception as e:
                             from_warning = f"SendUsingAccount set fail: {e}"
                     else:
-                        from_warning = f"'{from_account}' Outlook accounts mein match nahi mila — default account use kiya"
+                        # Koi sendable ACCOUNT match nahi hua. Shayad yeh ek
+                        # mailbox/STORE hai (jaise info@... jise user parh sakta hai
+                        # par alag send-account nahi). Us address SE "Send-As /
+                        # on-behalf" se bhejo — user ki apni mailbox pe permission
+                        # hoti hai to chalega.
+                        send_as = ""
+                        try:
+                            sess2 = outlook.Session
+                            for k in range(1, sess2.Stores.Count + 1):
+                                st = sess2.Stores.Item(k)
+                                dn = getattr(st, "DisplayName", "") or ""
+                                try:
+                                    sm = getattr(st, "SmtpAddress", "") or ""
+                                except Exception:
+                                    sm = ""
+                                cand = (sm or (dn if "@" in dn else "")).lower()
+                                if cand and (cand == needle or needle in cand
+                                             or cand.startswith(needle)):
+                                    send_as = sm or dn
+                                    break
+                        except Exception:
+                            pass
+                        if not send_as and "@" in from_account:
+                            send_as = from_account.strip()
+                        if send_as:
+                            try:
+                                mail.SentOnBehalfOfName = send_as
+                                routed_via = f"{send_as} (send-as)"
+                            except Exception as e:
+                                from_warning = (f"'{from_account}' se nahi bhej paya "
+                                                f"(send-as fail: {e}) — default use kiya")
+                        else:
+                            from_warning = (f"'{from_account}' Outlook accounts mein "
+                                            "match nahi mila — default account use kiya")
 
                 mail.Send()
                 result = {"ok": True, "to": _join(to), "subject": subject}
