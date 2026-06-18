@@ -1928,10 +1928,15 @@ class ChatService:
         """Brain se ek SAAF, self-contained fact nikaalo jo yaad rakhna hai
         (third-person, bina 'yaad rakho' jaise verb). Fail → raw message."""
         prompt = (
-            "User chahta hai main yeh baat YAAD rakhun. Ek SAAF, mukhtasar fact likho "
-            "jo baad mein kaam aaye: third-person, self-contained, bina 'yaad rakho/"
-            "remember' jaise verb ke. User KISI BHI language mein likhe — fact usi "
-            "language mein rakho jisme baat hai. SIRF fact ki ek line do, aur kuch nahi.\n\n"
+            "User chahta hai main yeh baat YAAD rakhun. Usi baat ko ek SAAF, "
+            "mukhtasar fact mein likho jo baad mein kaam aaye. RULES:\n"
+            "- Matlab BILKUL na badlo; sirf 'yaad rakho/remember' jaisa verb hatao.\n"
+            "- Agar baat USER ke apne baare mein hai (naam, pasand, kaam, detail), to "
+            "fact 'User' se likho (jaise 'User ka naam Zain hai', 'User ko ... pasand "
+            "hai'). General/duniya ke baare mein statement MAT banao.\n"
+            "- Koi nayi maloomat mat jodo jo user ne nahi kahi.\n"
+            "- Fact usi language mein rakho jisme user ne baat ki.\n"
+            "SIRF fact ki ek line do, aur kuch nahi.\n\n"
             f"User: {message}\nFact:"
         )
         try:
