@@ -530,9 +530,15 @@ class ChatService:
                 reply = "Theek hai Boss, woh chhod diya."
                 await self._save_message("assistant", reply, "[]")
                 return {"reply": reply, "actions": []}
-            _orig = self._clarify_session.get("original", "")
+            _sess = self._clarify_session
             self._clarify_session = None
+            _orig = _sess.get("original", "")
             user_message = f"{_orig} — {user_message}".strip(" —")
+            # Original ke attachments wapas (clarify ke jawab mein file dobara attach
+            # nahi hoti) — warna "folder + yeh image" ka image ka path kho jata.
+            _prev_atts = _sess.get("attachments") or []
+            if _prev_atts:
+                attachments = list(_prev_atts) + [a for a in attachments if a not in _prev_atts]
             just_clarified = True
 
         # PRODUCT PICK — agar abhi maine store ke products dikhaye the aur user
@@ -558,13 +564,15 @@ class ChatService:
             if viewable:
                 # Pichli file yaad rakho (agle message mein "isme kya hai" ke liye).
                 self._last_files = viewable
-                # Faisla BRAIN karta hai (keyword NAHI, kisi bhi language mein):
-                # file kisi ko SEND karni hai, ya us file ke BAARE mein pooch raha
-                # hai? Send nahi → JARVIS khud file dekh kar batata hai. Safe
-                # default = describe (fail ho to bhi nuksan nahi).
-                is_send = await self._file_intent_is_send(user_message)
-                if not is_send:
+                # Faisla BRAIN karta hai (keyword NAHI, kisi bhi language): file ke
+                # saath kya karna hai — describe (content batao) / send (kisi ko
+                # bhejo) / action (folder mein rakho, move/rename/save — engine ka
+                # kaam). describe → khud dekh ke batao; send/action → neeche pipeline
+                # (engine/send) ko attachments ke saath de do.
+                fi = await self._file_intent(user_message)
+                if fi == "describe":
                     return await self._describe_files(viewable, user_message)
+                # 'send' / 'action' → fall through (attachments engine/send ko milenge)
         elif self._last_files:
             # Koi nayi file attach nahi, lekin pichli baar image/PDF bheji thi aur
             # ab user USI ke baare mein pooch raha hai ("isme kya likha hai") →
@@ -652,7 +660,8 @@ class ChatService:
         if route == "do" and not just_clarified and not self._is_vision_request(user_message):
             clar = await self._maybe_clarify(user_message)
             if clar is not None:
-                self._clarify_session = {"original": user_message}
+                self._clarify_session = {"original": user_message,
+                                         "attachments": attachments}
                 return clar
 
         # VISION control — screen/app pe kuch KARNA ho (ya explicit "dekh ke/screen se").
@@ -705,7 +714,8 @@ class ChatService:
             # hai. Per-task hardcoded handler NAHI — ek general dimaag jo sab kar sakta
             # hai. Honest: jo actually hua wahi report karta hai (fake success nahi).
             needs_confirm = any(w in user_message.lower() for w in self._DESTRUCTIVE_WORDS)
-            engine_result = await self._run_engine_task(user_message, needs_confirm=needs_confirm)
+            engine_result = await self._run_engine_task(
+                user_message, attachments, needs_confirm=needs_confirm)
             await self._save_message(
                 "assistant", engine_result.get("reply", ""),
                 json.dumps(engine_result.get("actions", [])))
@@ -2002,22 +2012,29 @@ class ChatService:
             ".pdf",
         ))
 
-    async def _file_intent_is_send(self, message: str) -> bool:
-        """User ne file/image bheji — BRAIN decide karta hai (keyword NAHI, kisi
-        bhi language mein): isay kisi ko SEND karna hai (True) ya file ke BAARE
-        mein pooch raha hai/dekhna chahta hai (False). Khali message = sirf dekhna.
-        Fail/shak → False (describe = safe default)."""
+    async def _file_intent(self, message: str) -> str:
+        """User ne file/image bheji — BRAIN decide karta hai (keyword NAHI, kisi bhi
+        language) ke file ke saath kya karna hai:
+          'describe' = file ke CONTENT ke baare mein pooch raha/dekhna-padhna
+          'send'     = file kisi BANDE/app/email ko bhejni hai
+          'action'   = file ke saath koi aur KAAM (folder mein rakhna, move/copy/
+                       rename, kahin save, organize) — engine ka file-management kaam
+        Khali message ya shak/fail → 'describe' (safe default)."""
         msg = (message or "").strip()
         if not msg:
-            return False
+            return "describe"
         prompt = (
-            "User ne chat mein ek FILE/IMAGE attach ki hai. Uske text se batao woh "
-            "kya chahta hai. SIRF JSON do: {\"send\":true|false}\n"
-            "- send=true: file kisi BANDE/number/app/email ko BHEJNI/forward karni hai.\n"
-            "- send=false: file ke BAARE mein pooch raha hai ya use dekhna/padhna/"
-            "samajhna chahta hai (jaise 'isme kya hai', 'yeh padho', 'translate karo', "
-            "ya sirf file bheji bina kuch kahe).\n"
-            "User KISI BHI language/script mein likh sakta hai — lafz nahi, MATLAB samajh.\n\n"
+            "User ne chat mein ek FILE/IMAGE attach ki hai aur yeh kaha. Batao woh "
+            "is file ke saath KYA karna chahta hai. SIRF JSON do: "
+            "{\"intent\":\"describe|send|action\"}\n"
+            "- describe = file ke CONTENT ke baare mein pooch raha hai / dekhna-"
+            "padhna (isme kya hai, yeh padho, translate/summarize karo, ya sirf "
+            "file bheji bina kuch kahe).\n"
+            "- send = file kisi BANDE/number/app/email ko BHEJNI/forward karni hai.\n"
+            "- action = file ke saath koi AUR kaam: folder mein rakhna/daalna, move/"
+            "copy/rename, kahin SAVE karna, organize — yani file ko idhar-udhar "
+            "karna (bhejna ya content batana nahi).\n"
+            "User KISI BHI language/script mein likhe — lafz nahi, MATLAB samajh.\n\n"
             f"User: {msg}\nJSON:"
         )
         try:
@@ -2027,9 +2044,13 @@ class ChatService:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0, max_tokens=20))
             txt = (resp.choices[0].message.content or "").lower()
-            return "true" in txt and "send" in txt
+            if "send" in txt:
+                return "send"
+            if "action" in txt:
+                return "action"
+            return "describe"
         except Exception:
-            return False
+            return "describe"
 
     async def _refers_to_last_file(self, message: str) -> bool:
         """BRAIN decide karta hai (keyword nahi, kisi bhi language): user PICHLI
@@ -3001,12 +3022,17 @@ class ChatService:
         if attachments and not resume_transcript:
             files = ", ".join(attachments)
             task = (
-                f"{task}\n\nYEH EK FILE/DOCUMENT BHEJNI HAI (text message NAHI). "
+                f"{task}\n\n[User ne yeh file(s) chat mein di — yeh JARVIS ke paas "
+                f"PEHLE SE mojood hain, dobara dhoondne ki zaroorat nahi]\n"
                 f"File path: {files}\n"
-                f"File ko attach_file tool se compose box mein ATTACH karo "
-                f"(file ka naam/path kabhi TYPE mat karo — woh galat hai). "
-                f"Steps: contact kholo → attach_file {{file_path yeh path}} → "
-                f"thoda ruko → Enter se bhejo → verify ke file chat mein nazar aaye."
+                f"Task ke hisaab se is file ko use karo:\n"
+                f"- Agar kisi chat-app (WhatsApp/Teams) ya email mein BHEJNI hai → "
+                f"attach_file tool se compose box mein attach karo (path kabhi TYPE "
+                f"mat karo), phir Enter/Send se bhejo, verify karo file gayi.\n"
+                f"- Agar kisi FOLDER mein RAKHNI/move/copy/rename karni hai → "
+                f"move_path tool se file ko target folder mein le jao. Agar folder "
+                f"mojood nahi to pehle create_folder se banao, phir move_path.\n"
+                f"- Kaam ke baad VERIFY karo ke woh waqai hua (file sahi jagah hai)."
             )
 
         if needs_confirm and not resume_transcript:
