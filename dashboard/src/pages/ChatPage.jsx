@@ -540,7 +540,7 @@ export default function ChatPage() {
                     // Backward-compat: purani history mein att string (sirf naam) tha.
                     const a = typeof att === 'string' ? { name: att, type: '', url: '' } : att;
                     const isImg = (a.type || '').startsWith('image/') ||
-                      /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(a.name || '');
+                      /\.(png|jpe?g|jpe|jfif|jff|jif|gif|webp|bmp|tiff?|svg|ico|heic|heif|avif)$/i.test(a.name || '');
                     if (isImg && a.url) {
                       return (
                         <a key={k} href={a.url} target="_blank" rel="noreferrer" title={a.name}>

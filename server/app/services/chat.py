@@ -1975,9 +1975,18 @@ class ChatService:
 
     @staticmethod
     def _is_viewable_file(path: str) -> bool:
-        """Image ya PDF? (JARVIS in ko dekh/padh kar bata sakta hai). General."""
+        """Image ya PDF? (JARVIS in ko dekh/padh kar bata sakta hai). Image ke
+        SAARE aam formats — jfif/jpe/heic waghera bhi (warna naya image 'samjha
+        hi nahi jata' wala bug aata hai)."""
         p = str(path).lower()
-        return p.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".pdf"))
+        return p.endswith((
+            # images
+            ".png", ".jpg", ".jpeg", ".jpe", ".jfif", ".jff", ".jif",
+            ".gif", ".webp", ".bmp", ".tiff", ".tif", ".svg", ".ico",
+            ".heic", ".heif", ".avif",
+            # docs JARVIS padh sakta hai
+            ".pdf",
+        ))
 
     async def _file_intent_is_send(self, message: str) -> bool:
         """User ne file/image bheji — BRAIN decide karta hai (keyword NAHI, kisi
@@ -2052,13 +2061,32 @@ class ChatService:
     def _cli_describe_files(paths: list[str], question: str) -> str | None:
         """Claude CLI ko Read tool ke saath chala kar file(s) ka prose jawab. Yehi
         mechanism vision use karta hai (claude -p --allowedTools Read)."""
+        import os
         import shutil
         import subprocess
+        import tempfile
         import json as _json
         exe = shutil.which("claude.cmd") or shutil.which("claude")
         if not exe:
             return None
-        files_block = "\n".join(f"- {p}" for p in paths)
+        # Claude ka Read tool image-vs-binary EXTENSION se decide karta hai.
+        # jfif/jff/jif/jpe asal mein JPEG hain par Read inhe binary samajhta hai →
+        # temp .jpg copy (same bytes) bana ke do, taake image ki tarah padhe.
+        norm_paths: list[str] = []
+        temps: list[str] = []
+        for p in paths:
+            if str(p).lower().endswith((".jfif", ".jff", ".jif", ".jpe")):
+                try:
+                    base = os.path.splitext(os.path.basename(p))[0]
+                    dst = os.path.join(tempfile.gettempdir(), f"jview_{base}.jpg")
+                    shutil.copyfile(p, dst)
+                    norm_paths.append(dst)
+                    temps.append(dst)
+                    continue
+                except Exception:
+                    pass
+            norm_paths.append(p)
+        files_block = "\n".join(f"- {p}" for p in norm_paths)
         q = (question or "").strip() or "Is file/image mein kya hai?"
         prompt = (
             "Tu JARVIS hai. Neeche di gayi file(s) ko Read tool se kholo aur DEKH/"
@@ -2083,6 +2111,12 @@ class ChatService:
         except Exception as e:
             log.warning("cli_describe_failed", err=str(e)[:120])
             return None
+        finally:
+            for t in temps:
+                try:
+                    os.remove(t)
+                except Exception:
+                    pass
 
     def _run_vision(self, task: str) -> dict:
         """Blocking see→act loop (runs in a thread). Vision = Claude CLI only.
