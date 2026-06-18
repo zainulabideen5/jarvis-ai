@@ -2808,7 +2808,8 @@ class ChatService:
         reply = self._email_confirm_text(to, subject, body, res["display"], atts)
         await self._save_message("assistant", reply, "[]")
         return {"reply": reply, "awaiting_input": True,
-                "actions": [{"action": "email_draft", "status": "awaiting_confirm"}]}
+                "actions": [{"action": "email_draft", "status": "awaiting_confirm",
+                             "editable": True, "body": body, "subject": subject}]}
 
     @staticmethod
     def _email_confirm_text(to: str, subject: str, body: str, frm_display: str = "",
@@ -2821,8 +2822,8 @@ class ChatService:
         if attachments:
             names = ", ".join(os.path.basename(str(a)) for a in attachments)
             lines.append(f"**📎 Attachment:** {names}")
-        return ("\n".join(lines) + f"\n\n{body}\n\n"
-                "— 'haan / bhej do' likho to bhej deta hoon. Ya batao kya badalna hai.")
+        # Professional — neeche buttons (Send/Edit/Cancel) action handle karte hain.
+        return "\n".join(lines) + f"\n\n{body}"
 
     def _resolve_from_account(self, frm: str) -> dict:
         """User ke bataye account ko asli Outlook account se match karo, taake
@@ -2923,7 +2924,8 @@ class ChatService:
             reply = self._email_confirm_text(to, subject, body, res["display"], _atts)
             await self._save_message("assistant", reply, "[]")
             return {"reply": reply, "awaiting_input": True,
-                    "actions": [{"action": "email_draft", "status": "awaiting_confirm"}]}
+                    "actions": [{"action": "email_draft", "status": "awaiting_confirm",
+                                 "editable": True, "body": body, "subject": subject}]}
 
         toks = set(_re.findall(r"[a-z]+", low))
         explicit_send = bool(_re.search(r"\b(bhej|bhejo|bhejdo|bhej\s*do|send)\b", low))
@@ -2982,7 +2984,8 @@ class ChatService:
         # Warna: yeh email ki refinement ya extra content hai → dobara compose.
         new = await self._compose_email(
             f"Pichla email — Subject: {sess['subject']}\n{sess['body']}\n\n"
-            f"User ka badlav/extra detail: {message}", force=True)
+            f"User ka badlav/extra detail: {message}", force=True,
+            has_attachment=bool(sess.get("attachments")))
         if new and new.get("need_info"):
             q = new.get("question") or "Boss, thodi aur detail batao?"
             self._email_session = {"stage": "gather", "to": sess["to"],
@@ -2996,11 +2999,14 @@ class ChatService:
             sess["body"] = (new.get("body") or sess["body"]).strip()
             sess["stage"] = "confirm"
             self._email_session = sess
-            reply = ("📧 Update kar diya, Boss:\n\n"
-                     f"**To:** {sess['to']}\n**Subject:** {sess['subject']}\n\n"
-                     f"{sess['body']}\n\n— 'haan / bhej do' to bhej dun?")
+            _atts = sess.get("attachments") or []
+            reply = self._email_confirm_text(
+                sess["to"], sess["subject"], sess["body"], "", _atts)
             await self._save_message("assistant", reply, "[]")
-            return {"reply": reply, "awaiting_input": True, "actions": []}
+            return {"reply": reply, "awaiting_input": True,
+                    "actions": [{"action": "email_draft", "status": "awaiting_confirm",
+                                 "editable": True, "body": sess["body"],
+                                 "subject": sess["subject"]}]}
         return None
 
     def _parse_chat_app_and_contact(self, task: str) -> tuple[str, str] | None:

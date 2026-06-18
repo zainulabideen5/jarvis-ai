@@ -28,6 +28,9 @@ export default function ChatPage() {
   const [editText, setEditText] = useState('');
   // Image lightbox — chat ke andar full image (X se band), Claude jaisa
   const [lightboxUrl, setLightboxUrl] = useState(null);
+  // Email draft edit — kaunsi message ka draft edit ho raha + uska text
+  const [emailEditMsg, setEmailEditMsg] = useState(null);
+  const [emailEditText, setEmailEditText] = useState('');
   const endRef = useRef(null);
   const messagesRef = useRef(null);     // scrollable container
   const prevCountRef = useRef(0);       // detect when a NEW message is added
@@ -154,6 +157,8 @@ export default function ChatPage() {
             // poll se usko mat mitao warna user click hi nahi kar payega.
             const lastPrev = prev[prev.length - 1];
             if (lastPrev?.pending?.length > 0) return prev;
+            // Email draft ke Send/Edit/Cancel buttons bhi poll se na mit-en
+            if (lastPrev?.actions?.some?.((a) => a.action === 'email_draft' && a.status === 'awaiting_confirm')) return prev;
             const next = history.map((m) => {
               const msg = { role: m.role, content: m.content, actions: m.actions || [] };
               // User message ke attachments (server URL) actions mein save hain →
@@ -593,10 +598,67 @@ export default function ChatPage() {
                       {a.type === 'task_created' && `Task created: ${a.title}`}
                       {a.type === 'task_assigned' && `Task "${a.title}" → ${a.assigned_to} ko assign ki`}
                       {a.type === 'client_created' && `Client added: ${a.name}`}
-                      {a.action && `${a.action}: ${a.status}`}
+                      {a.action && a.action !== 'email_draft' && `${a.action}: ${a.status}`}
                     </div>
                   ))}
                 </div>
+              )}
+
+              {/* Email draft — Send / Edit / Cancel buttons (professional) */}
+              {msg.actions?.some?.((a) => a.action === 'email_draft' && a.status === 'awaiting_confirm') && (
+                (() => {
+                  const ed = msg.actions.find((a) => a.action === 'email_draft');
+                  if (emailEditMsg === i) {
+                    return (
+                      <div className="mt-3 flex flex-col gap-2">
+                        <textarea
+                          value={emailEditText}
+                          onChange={(e) => setEmailEditText(e.target.value)}
+                          rows={5}
+                          autoFocus
+                          className="w-full px-3 py-2 text-sm bg-gray-900 border border-gray-600 text-white rounded resize-y"
+                          placeholder="Email ka message edit karo…"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => { const t = emailEditText.trim(); if (t) { setEmailEditMsg(null); sendMessage(t); } }}
+                            className="px-3 py-1 text-xs bg-green-600 hover:bg-green-500 text-white rounded"
+                          >
+                            💾 Save
+                          </button>
+                          <button
+                            onClick={() => setEmailEditMsg(null)}
+                            className="px-3 py-1 text-xs bg-gray-600 hover:bg-gray-500 text-white rounded"
+                          >
+                            ↩️ Wapas
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="mt-3 flex gap-2">
+                      <button
+                        onClick={() => sendMessage('haan, bhej do')}
+                        className="px-3 py-1 text-xs bg-green-600 hover:bg-green-500 text-white rounded"
+                      >
+                        ✅ Bhej do
+                      </button>
+                      <button
+                        onClick={() => { setEmailEditMsg(i); setEmailEditText(ed?.body || ''); }}
+                        className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded"
+                      >
+                        ✏️ Edit
+                      </button>
+                      <button
+                        onClick={() => sendMessage('cancel')}
+                        className="px-3 py-1 text-xs bg-red-600 hover:bg-red-500 text-white rounded"
+                      >
+                        ❌ Cancel
+                      </button>
+                    </div>
+                  );
+                })()
               )}
 
               {/* Pending confirmation buttons (+ Edit for message drafts, any app) */}
