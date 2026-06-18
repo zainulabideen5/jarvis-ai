@@ -462,8 +462,9 @@ class ChatService:
                 await self._save_message("assistant", reply, "[]")
                 return {"reply": reply, "actions": [{"action": "vision_task",
                         "status": "success", "message": res.get("reply", res.get("msg", ""))}]}
-            # Vision se na hua → DEAD-END nahi; Claude decide kare (web-search/jawab)
-            reply = await self._vision_fail_reply(sess.get("task", user_message))
+            # Vision se na hua → DEAD-END nahi; Claude decide kare (web-search/jawab).
+            # Augmented `task` do (clarification samet), purana sess['task'] nahi.
+            reply = await self._vision_fail_reply(task)
             await self._save_message("assistant", reply, "[]")
             return {"reply": reply, "actions": [{"action": "vision_task", "status": "failed"}]}
 
@@ -1647,7 +1648,9 @@ class ChatService:
                 )
                 txt = brain.ask(sys, [{"role": "user", "content": message}])
                 if txt and txt.strip():
-                    return txt.strip().strip('"').splitlines()[0][:140]
+                    lines = txt.strip().strip('"').splitlines()
+                    if lines and lines[0].strip():
+                        return lines[0].strip()[:140]
         except Exception as e:
             log.warning("make_search_query_failed", err=str(e)[:120])
         return message
@@ -1948,7 +1951,13 @@ class ChatService:
         prods = shop["products"]
         low = message.lower().strip()
         chosen = None
-        m = _re.search(r"\b(\d{1,2})\b", low)               # "2 order karo"
+        # number ko index SIRF tab maano jab selection-intent ho (order/chahiye/wala/
+        # lelo/kholo) ya message chhota ho — warna stray number (quantity/time) galat
+        # product khol deta tha.
+        sel_intent = (len(low.split()) <= 3 or bool(_re.search(
+            r"\b(order|chahiye|chaiye|wala|wali|le\s*lo|lelo|kholo|open|pick|select|"
+            r"number|no\.?)\b", low)))
+        m = _re.search(r"\b(\d{1,2})\b", low) if sel_intent else None
         if m:
             idx = int(m.group(1)) - 1
             if 0 <= idx < len(prods):
@@ -2365,6 +2374,13 @@ class ChatService:
         # GATHER stage — humne sawal pucha tha, ab yeh uska jawab hai. Original
         # instruction + Boss ka jawab milaa ke dobara compose karo.
         if sess.get("stage") == "gather":
+            # ESCAPE: agar message saaf ek NAYA/unrelated command hai (app kholo,
+            # undo/redo) to email session chhod do — warna woh hijack ho jata tha.
+            # Conservative cues (email-body content mein yeh shabd kam aate hain).
+            if (_re.search(r"\b(kholo|khol\s*do|launch|chalu\s*kar|undo|redo)\b", low)
+                    or _re.match(r"^\s*open\s+\w", low)):
+                self._email_session = None
+                return None
             addr2 = _re.search(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", message)
             to = sess.get("to") or (addr2.group(0) if addr2 else "")
             combined = f"{sess.get('instruction','')}\n\nBoss ne yeh detail di: {message}"

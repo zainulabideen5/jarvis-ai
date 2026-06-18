@@ -120,6 +120,10 @@ export default function ChatPage() {
       api.getChatHistory().then((history) => {
         if (history.length > 0) {
           setMessages((prev) => {
+            // Active confirm-buttons (pending) wali message DB mein nahi hoti —
+            // poll se usko mat mitao warna user click hi nahi kar payega.
+            const lastPrev = prev[prev.length - 1];
+            if (lastPrev?.pending?.length > 0) return prev;
             const next = history.map((m) => ({ role: m.role, content: m.content, actions: m.actions || [] }));
             // Kuch badla nahi? to wahi array rakho — bewajah re-render/scroll na ho.
             const same = prev.length === next.length

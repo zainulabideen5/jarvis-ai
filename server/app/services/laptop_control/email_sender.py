@@ -108,7 +108,12 @@ class EmailSender:
                     if r_oc.get("warning"):
                         note = f" — note: {r_oc['warning']}"
                     return True, f"Email bhej diya {', '.join(oc_emails)} ko{src}{note}"
-                log.info("outlook_com_failed_fallback", error=r_oc.get("error", ""))
+                # COM ATTEMPT hua par fail — SMTP pe MAT giro (double-send / galat
+                # recipient ka risk). Honest failure return karo.
+                log.info("outlook_com_attempt_failed", error=r_oc.get("error", ""))
+                return False, ("Outlook desktop se nahi bhej paya: "
+                               f"{r_oc.get('error') or 'unknown error'}. "
+                               "(Double-send se bachne ke liye SMTP fallback skip kiya.)")
         except Exception as e:
             log.info("outlook_com_init_fallback", error=str(e)[:200])
 

@@ -399,7 +399,9 @@ class UniversalEngine:
                 # the LAST send-ish step is what we verify (message, not search)
                 art = _basename_if_path(txt)
                 if art and not ("search" in str(args.get("element_name", "")).lower()):
-                    typed = {"window": str(args.get("window_title") or ""), "text": art, "before": pre_count}
+                    typed = {"window": str(args.get("window_title") or ""), "text": art,
+                             "before": pre_count,
+                             "is_file": tool_name in ("attach_file", "pick_file_in_dialog")}
 
         if typed:
             present = await self._bounded(
@@ -579,7 +581,11 @@ class UniversalEngine:
                         # RESUME path: `task` is the user's clarifying answer, not
                         # the original command — pull the recipient from the
                         # original command in the transcript so the guard still runs.
+                        # SIRF user messages scan karo — assistant ke JSON/playbook
+                        # se galat recipient na nikle.
                         for _m in transcript:
+                            if _m.get("role") != "user":
+                                continue
                             _r = _extract_recipient(str(_m.get("content", "")))
                             if _r:
                                 recipient = _r

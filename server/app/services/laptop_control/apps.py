@@ -248,9 +248,9 @@ class AppController:
             return i, r, content
 
         sources: list[dict] = []
-        top = list(enumerate(results[:2]))  # only top 2 — saves time
+        top = list(enumerate(results[:3]))  # top 3 — synthesis [1][2][3] cite karta hai
         fetched: dict = {}
-        with ThreadPoolExecutor(max_workers=2) as pool:
+        with ThreadPoolExecutor(max_workers=3) as pool:
             futs = [pool.submit(_fetch_one, item) for item in top]
             # Wrap the iterator in try/except — as_completed raises TimeoutError
             # OUTSIDE the inner block when the 8s hard cap is hit. We treat
@@ -294,9 +294,14 @@ class AppController:
                     or "you need to enable" in cl
                     or "requires javascript" in cl)
 
+        # CAP: at most 1 thin source render karo (warna 2-3 x 22s = request hang).
+        rendered_count = 0
         for s in sources:
+            if rendered_count >= 1:
+                break
             if s.get("url") and _is_thin(s.get("content", "")):
-                rendered = AppController._render_page_text(s["url"])
+                rendered = AppController._render_page_text(s["url"], timeout_ms=15000)
+                rendered_count += 1
                 if rendered and len(rendered.strip()) > len(s.get("content", "").strip()):
                     s["content"] = rendered[:2000]
                     log.info("web_search_js_rendered", url=s["url"][:60], chars=len(rendered))
