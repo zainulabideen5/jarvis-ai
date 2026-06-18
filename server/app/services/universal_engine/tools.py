@@ -368,6 +368,58 @@ def wait(seconds: float) -> dict:
     return {"ok": True, "waited": s}
 
 
+# ----------------------------------------------------------------------
+# WEB tools — JARVIS ka apna ALAG Playwright browser (user ke Chrome se alag).
+# Website/order tasks ke liye YEH use karo (vision NAHI) — real DOM, reliable,
+# default background (headless). General: koi bhi site.
+# ----------------------------------------------------------------------
+def web_open(url: str) -> dict:
+    """Website kholo JARVIS ke apne Playwright browser mein (background)."""
+    from app.services.web_browser import WebBrowser
+    return WebBrowser.get().goto(url)
+
+
+def web_read(query: str = "") -> dict:
+    """Khuli web-page se content parho: title, text, clickable buttons/links,
+    inputs. Isse dekho kya likha/kahan click karna hai."""
+    from app.services.web_browser import WebBrowser
+    return WebBrowser.get().read()
+
+
+def web_click(target: str) -> dict:
+    """Page pe kuch click karo — visible TEXT (e.g. 'DHA Phase 2', 'Add to cart')
+    ya CSS selector. Dropdown option/button/link sab isi se."""
+    from app.services.web_browser import WebBrowser
+    return WebBrowser.get().click(target)
+
+
+def web_fill(selector: str, text: str) -> dict:
+    """Page ke kisi input/box (CSS selector) mein text likho (search/address)."""
+    from app.services.web_browser import WebBrowser
+    return WebBrowser.get().fill(selector, text)
+
+
+def web_eval(js: str) -> dict:
+    """Page mein JavaScript chalao aur result lo — sabse taqatwar (React dropdown
+    set karna, menu/prices structured nikalna). e.g. JSON.stringify(...)."""
+    from app.services.web_browser import WebBrowser
+    return WebBrowser.get().eval_js(js)
+
+
+def web_press(key: str, selector: str = "") -> dict:
+    """Page pe ek key dabao (e.g. 'Enter' search box submit ke liye). selector do
+    to us field mein, warna page pe. (web_eval se bhi koi bhi JS ho sakta hai.)"""
+    from app.services.web_browser import WebBrowser
+    return WebBrowser.get().press(key, selector)
+
+
+def web_login(url: str) -> dict:
+    """Site ko VISIBLE (headed) kholo taake user ek dafa LOGIN kar le — session
+    save ho jayega, phir background mein bhi logged-in rahega."""
+    from app.services.web_browser import WebBrowser
+    return WebBrowser.get().login(url)
+
+
 def _re_escape(s: str) -> str:
     import re
     return re.escape(s or "")
@@ -518,6 +570,13 @@ TOOLS = {
     "resize_window": resize_window,
     "close_app": close_app,
     "open_url": open_url,
+    "web_open": web_open,
+    "web_read": web_read,
+    "web_click": web_click,
+    "web_fill": web_fill,
+    "web_eval": web_eval,
+    "web_press": web_press,
+    "web_login": web_login,
     "powershell": powershell,
     "find_files": find_files,
     "screenshot_check": screenshot_check,
@@ -538,6 +597,16 @@ TOOLS_DOC = """
 - resize_window {"title": "...", "width": 1000, "height": 720} — window ko chhota karo agar full-screen ho
 - close_app {"name": "..."} — app band
 - open_url {"url": "https://..."} — user ke default browser mein URL
+★ WEB tools — JARVIS ka apna ALAG Playwright browser (background). KISI BHI website
+  ka kaam (order, booking, form bharna, prices/menu nikalna, account pe kuch karna,
+  kuch bhi) inse karo — vision ya open_url se NAHI. Real DOM, reliable, har site pe:
+- web_open {"url": "..."} — site kholo (background headless browser)
+- web_read {} — khuli page ka content: title, text, clickable buttons/links, inputs (isse dekho kahan click/kya likhna)
+- web_click {"target": "DHA Phase 2"} — visible TEXT ya CSS selector pe click (dropdown option/button/link)
+- web_fill {"selector": "...", "text": "..."} — input/box mein likho (search/address/form)
+- web_eval {"js": "..."} — page mein KOI BHI JS chala kar result lo (SABSE taqatwar — jo bhi webpage pe mumkin hai sab: React dropdown set, scroll/hover, koi field set, menu/prices structured nikalna). Misal: "JSON.stringify([...document.querySelectorAll('.item')].map(e=>e.innerText))"
+- web_press {"key": "Enter", "selector": "?"} — key dabao (search submit ke liye Enter). selector do to us field mein
+- web_login {"url": "..."} — site VISIBLE kholo taake user ek dafa LOGIN kar le (phir background mein bhi logged-in). Sirf jab login zaroori ho.
 - create_file {"path":"...","content":"..."} — nayi text file banao (UNDOABLE)
 - create_excel {"path":"...","data":[["Name","Age"],["Zain","25"]],"sheet_name":"Sheet1"} — Excel (.xlsx) SEEDHE banao, Excel khole BAGHAIR (BACKGROUND). data = rows ki list (list-of-lists, ya list-of-dicts jisme keys=columns). Spreadsheet/table/data ke liye YEH use karo — Excel GUI nahi (UNDOABLE)
 - create_folder {"path":"..."} — naya folder banao (UNDOABLE)
