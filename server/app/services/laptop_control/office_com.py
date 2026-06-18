@@ -345,21 +345,56 @@ class OfficeCOM:
         outlook = None
         try:
             import win32com.client
-            outlook = win32com.client.DispatchEx("Outlook.Application")
+            # Pehle CHAL RAHE Outlook se attach karo (woh user ki LIVE profile +
+            # saare accounts rakhta hai). Agar na chal raha ho to DispatchEx.
+            try:
+                outlook = win32com.client.GetActiveObject("Outlook.Application")
+            except Exception:
+                outlook = win32com.client.DispatchEx("Outlook.Application")
             session = outlook.Session
             accounts = []
-            for i in range(1, session.Accounts.Count + 1):
-                try:
+            seen: set[str] = set()
+
+            def _add(smtp, disp, user="", atype=0):
+                smtp = (smtp or "").strip()
+                disp = (disp or "").strip()
+                key = (smtp or disp).lower()
+                if not key or key in seen:
+                    return
+                seen.add(key)
+                accounts.append({
+                    "index": len(accounts) + 1, "smtp": smtp or disp,
+                    "display_name": disp, "user_name": user,
+                    "account_type": int(atype or 0),
+                })
+
+            # 1) Accounts collection (classic — configured send/receive accounts)
+            try:
+                for i in range(1, session.Accounts.Count + 1):
                     acc = session.Accounts.Item(i)
-                    accounts.append({
-                        "index": i,
-                        "smtp": getattr(acc, "SmtpAddress", "") or "",
-                        "display_name": getattr(acc, "DisplayName", "") or "",
-                        "user_name": getattr(acc, "UserName", "") or "",
-                        "account_type": int(getattr(acc, "AccountType", 0) or 0),
-                    })
-                except Exception:
-                    continue
+                    _add(getattr(acc, "SmtpAddress", ""),
+                         getattr(acc, "DisplayName", ""),
+                         getattr(acc, "UserName", ""),
+                         getattr(acc, "AccountType", 0))
+            except Exception as e:
+                log.info("accounts_enum_partial", err=str(e)[:120])
+
+            # 2) Stores (har account ka mailbox — kabhi Accounts se zyada milte hain)
+            try:
+                for j in range(1, session.Stores.Count + 1):
+                    st = session.Stores.Item(j)
+                    disp = getattr(st, "DisplayName", "") or ""
+                    # Store ka SMTP nikalne ki koshish (account store ho to)
+                    smtp = ""
+                    try:
+                        smtp = getattr(st, "SmtpAddress", "") or ""
+                    except Exception:
+                        smtp = ""
+                    # DisplayName aksar email hota hai account-stores mein
+                    _add(smtp or (disp if "@" in disp else ""), disp)
+            except Exception as e:
+                log.info("stores_enum_partial", err=str(e)[:120])
+
             return {"ok": True, "accounts": accounts, "count": len(accounts)}
         except Exception as e:
             return {"ok": False, "error": str(e)[:300], "accounts": [], "count": 0}
