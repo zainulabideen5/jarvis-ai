@@ -2801,6 +2801,39 @@ class ChatService:
         subject = (draft.get("subject") or "(no subject)").strip()
         body = (draft.get("body") or "").strip()
         frm = (draft.get("from_account") or "").strip()
+        return await self._email_to_confirm_or_pick(to, subject, body, frm, atts)
+
+    def _email_accounts(self) -> list[str]:
+        """Outlook ke SAARE accounts ke SMTP emails — JITNE BHI hon (2, 50, 100,
+        koi limit nahi; Outlook jo de woh sab). General: har user ke apne accounts."""
+        try:
+            from app.services.laptop_control.office_com import OfficeCOM
+            accs = OfficeCOM.get().outlook_list_accounts().get("accounts", [])
+            return [a.get("smtp", "") for a in accs if a.get("smtp")]
+        except Exception:
+            return []
+
+    async def _email_to_confirm_or_pick(self, to: str, subject: str, body: str,
+                                        frm: str, atts: list[str]) -> dict:
+        """Agar user ne account specify nahi kiya AUR 1 se zyada Outlook accounts
+        hain → poochho KIS account se (clickable options). Warna seedha confirm
+        draft. General — kitne bhi accounts."""
+        if not frm:
+            accts = await asyncio.to_thread(self._email_accounts)
+            if len(accts) > 1:
+                self._email_session = {"stage": "pick_account", "to": to,
+                                       "subject": subject, "body": body,
+                                       "attachments": atts}
+                q = f"📧 Boss, aap ke paas {len(accts)} email accounts hain — KIS se bhejun?"
+                # Zyada accounts (>8) → kuch quick-options + 'naam/email type karo'
+                # taake 100 accounts pe bhi koi bhi chun sako (koi limit nahi).
+                if len(accts) > 8:
+                    q += ("\n\nNeeche kuch hain — ya jis account ka **naam/email** "
+                          "chahiye woh **type** kar do (sab kaam karenge).")
+                await self._save_message("assistant", q, "[]")
+                return {"reply": q, "awaiting_input": True, "options": accts[:8],
+                        "actions": [{"action": "email_pick_account",
+                                     "status": "awaiting_input"}]}
         res = await asyncio.to_thread(self._resolve_from_account, frm)
         self._email_session = {"stage": "confirm", "to": to, "subject": subject,
                                "body": body, "from_account": res["send"],
@@ -2873,6 +2906,13 @@ class ChatService:
             await self._save_message("assistant", reply, "[]")
             return {"reply": reply, "actions": []}
 
+        # ACCOUNT PICK — humne poocha tha kis account se; yeh uska jawab (option
+        # click ya naam) → us account ko set kar ke confirm draft dikhao.
+        if sess.get("stage") == "pick_account":
+            return await self._email_to_confirm_or_pick(
+                sess["to"], sess["subject"], sess["body"], message.strip(),
+                sess.get("attachments") or [])
+
         # CONFIRM stage mein agar NAYA email command (alag recipient) aaye to
         # purana draft chhod ke fresh start (taake purana atka na rahe).
         if sess.get("stage") != "gather":
@@ -2916,16 +2956,8 @@ class ChatService:
             subject = (new.get("subject") or "(no subject)").strip()
             body = (new.get("body") or "").strip()
             frm = (new.get("from_account") or sess.get("from_account") or "").strip()
-            res = await asyncio.to_thread(self._resolve_from_account, frm)
-            _atts = sess.get("attachments") or []
-            self._email_session = {"stage": "confirm", "to": to, "subject": subject,
-                                   "body": body, "from_account": res["send"],
-                                   "attachments": _atts}
-            reply = self._email_confirm_text(to, subject, body, res["display"], _atts)
-            await self._save_message("assistant", reply, "[]")
-            return {"reply": reply, "awaiting_input": True,
-                    "actions": [{"action": "email_draft", "status": "awaiting_confirm",
-                                 "editable": True, "body": body, "subject": subject}]}
+            return await self._email_to_confirm_or_pick(
+                to, subject, body, frm, sess.get("attachments") or [])
 
         toks = set(_re.findall(r"[a-z]+", low))
         explicit_send = bool(_re.search(r"\b(bhej|bhejo|bhejdo|bhej\s*do|send)\b", low))
