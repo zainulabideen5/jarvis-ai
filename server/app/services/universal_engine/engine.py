@@ -74,6 +74,21 @@ Meaningless, adhoore, ya ghalat result ko KABHI "ho gaya" mat bolo. Agar pakka n
 ho ke kaam hua, to honestly batao kya hua aur kya nahi. Fake success se user ka
 bharosa toot-ta hai — honest failure usse behtar hai.
 
+PLAYBOOK — note/text ko file mein likhna aur SAVE karna (BACKGROUND, no window):
+Jab user kahe "notepad mein yeh likho aur save karo" / "yeh text save kar do" /
+"is naam se file bana do" — editor (Notepad waghera) GUI mein khol kar type MAT
+karo. Woh window saamne aata hai (user ko disturb karta hai), slow hai, aur GUI
+save-dialog reliable nahi. Iske bajaye file SEEDHE disk pe likho — yeh poora
+kaam BACKGROUND mein, ek hi step mein, save samet ho jaata hai, koi window nahi:
+  • create_file {{"path": "<full path>", "content": "<poora text jo user ne diya>"}}
+  • Path: agar user ne folder na bataya to Documents mein rakho, e.g.
+    "%USERPROFILE%\\Documents\\<naam>.txt". Naam wahi jo user ne kaha (e.g. Zain),
+    extension na ho to .txt laga do.
+  • Phir {{"done": true, "reply": "..."}} mein honestly batao file kahan save hui
+    (poora path).
+Sirf jab user KHAAS bole "notepad khol ke saamne dikhao" tab GUI use karo —
+warna hamesha yeh background file-write tareeqa istemal karo.
+
 AVAILABLE ACTIONS:
 {TOOLS_DOC}
 
