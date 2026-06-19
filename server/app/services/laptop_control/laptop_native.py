@@ -1022,13 +1022,57 @@ class LaptopNative:
         return False
 
     def _invoke_any(self, window_title: str, names: list[str], control_type: str) -> bool:
-        """Try clicking the first matching candidate label. Returns True on success."""
+        """Try clicking the first matching candidate label. Returns True on success.
+        uia_invoke (child_window/filtered descendants) fail kare to FULL-descendant
+        keyword search se dhoondho (Teams/WebView ke bade tree pe yeh reliable —
+        diagnostic dump isi tarah milta hai)."""
         for nm in names:
             try:
                 if self.uia_invoke(window_title, nm, control_type).get("ok"):
                     return True
             except Exception:
                 continue
+        # Fallback: poore tree mein keyword-match (bounded) — jahan filtered search miss kare
+        return self._invoke_by_search(window_title, names)
+
+    def _invoke_by_search(self, window_title: str, names: list[str],
+                          control_types=("Button", "MenuItem", "SplitButton",
+                                         "Hyperlink", "ListItem")) -> bool:
+        """Window ke SAARE descendants mein keyword-match karke element invoke karo
+        (bounded ~6s). pywinauto ka filtered descendants(control_type=) Teams jaise
+        bade WebView trees pe aksar miss karta hai; full descendants() + Python-side
+        filter (jaise diagnostic dump) reliable hai. invoke (no-mouse) → click fallback."""
+        import time as _t
+        win = self._find_window(window_title)
+        if win is None:
+            return False
+        low = [n.lower() for n in names if n]
+        if not low:
+            return False
+        deadline = _t.monotonic() + 6.0
+        try:
+            for e in win.descendants():
+                if _t.monotonic() > deadline:
+                    break
+                try:
+                    ct = e.element_info.control_type or ""
+                    if ct not in control_types:
+                        continue
+                    nm = (e.element_info.name or "").lower()
+                    if nm and any(ln in nm for ln in low):
+                        try:
+                            e.invoke()            # UIA — mouse hile baghair
+                            return True
+                        except Exception:
+                            try:
+                                e.click_input()   # fallback: real click
+                                return True
+                            except Exception:
+                                continue
+                except Exception:
+                    continue
+        except Exception:
+            pass
         return False
 
     def _pick_open_dialog(self, file_path: str, timeout: float = 5.0) -> dict:

@@ -2461,22 +2461,19 @@ class ChatService:
                      f"poora naam ya path batao, phir {info['contact']} ko bhej dunga.")
             await self._save_message("assistant", reply, "[]")
             return {"reply": reply, "awaiting_input": True, "actions": []}
-        from app.services.laptop_control.laptop_native import LaptopNative
-        nat = LaptopNative.get()
-        origin = await asyncio.to_thread(nat.active_window_title)
-        log.info("file_send_try", app=info["app"], contact=info["contact"], file=path)
-        res = await asyncio.to_thread(nat.chat_send_file, info["app"], info["contact"], path, "")
-        await asyncio.to_thread(self._post_send_cleanup, origin)
+        # File mil gayi — bhejne se PEHLE confirm (galat banday/file na chali jaye).
         import os as _os
-        if res.get("ok"):
-            _default = f"'{_os.path.basename(path)}' {info['contact']} ko bhej di"
-            reply = f"✅ {res.get('msg') or _default}"
-        else:
-            reply = (f"⚠️ Boss, {res.get('msg') or res.get('error') or 'file nahi bhej paya'}. "
-                     "(Dobara bhejne se rok diya — khud dekh lein.)")
+        token = f"confirm_{secrets.token_urlsafe(16)}"
+        pending = {"action": "send_file_native", "params": {
+            "app": info["app"], "contact": info["contact"], "path": path}}
+        async with self._pending_lock:
+            self._pending_actions[token] = pending
+        reply = (f"📎 **{self._app_label(info['app'])} → {info['contact']}**\n\n"
+                 f"File: **{_os.path.basename(path)}**\n\n"
+                 "Bhej dun, Boss? ✅ **Bhej do** · ❌ **Cancel**")
         await self._save_message("assistant", reply, "[]")
-        return {"reply": reply, "actions": [{"action": "chat_send_file",
-                "status": "success" if res.get("ok") else "failed"}]}
+        return {"reply": reply, "actions": [],
+                "pending": [{"token": token, "action": pending}]}
 
     async def _try_shopping(self, message: str) -> dict | None:
         """Store se products + LIVE prices nikaal ke CHAT mein dikhao (vision se
@@ -3448,6 +3445,25 @@ class ChatService:
         baqi controller actions purane tareeqe se.
         """
         self._remember_approved_recipient(pending)
+        # FILE send (laptop ki file kisi ko) — confirm ke baad ASLI file attach karke bhejo.
+        if pending.get("action") == "send_file_native":
+            p = pending.get("params", {})
+            import os as _os
+            from app.services.laptop_control.laptop_native import LaptopNative
+            nat = LaptopNative.get()
+            origin = await asyncio.to_thread(nat.active_window_title)
+            res = await asyncio.to_thread(nat.chat_send_file, p["app"], p["contact"],
+                                          p["path"], "")
+            await asyncio.to_thread(self._post_send_cleanup, origin)
+            if res.get("ok"):
+                _d = f"'{_os.path.basename(p['path'])}' {p['contact']} ko bhej di"
+                reply = f"✅ {res.get('msg') or _d}"
+            else:
+                reply = (f"⚠️ Boss, {res.get('msg') or res.get('error') or 'file nahi bhej paya'}. "
+                         "(Dobara bhejne se rok diya — khud dekh lein.)")
+            await self._save_message("assistant", reply, "[]")
+            return {"reply": reply, "actions": [{"action": "chat_send_file",
+                    "status": "success" if res.get("ok") else "failed"}]}
         if pending.get("action") == "universal_task":
             params = pending.get("params", {})
             task = params.get("task", "")
