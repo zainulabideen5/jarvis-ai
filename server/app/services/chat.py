@@ -2773,12 +2773,17 @@ class ChatService:
         ctx = await self._recent_context()
         draft = await self._compose_email(message, context=ctx, has_attachment=bool(atts))
         if not draft:
-            # @address tha → yeh pakka email-send hai; vision pe MAT phenko, pucho
-            if addr:
+            # Email intent CLEAR hai (email/gmail word ya @address) → email flow
+            # mein RAHO; chat_send / engine pe MAT giro (warna "email" ko chat
+            # message bana deta tha ya "kaunsa platform" poochta tha). Detail pucho.
+            if addr or email_word:
                 self._email_session = {"stage": "gather", "instruction": message,
-                                       "to": addr.group(0), "attachments": atts}
-                reply = (f"📧 Boss, {addr.group(0)} ko kya bhejun? Subject/baat batao "
-                         "to email bana ke confirm ke liye dikha dunga.")
+                                       "to": (addr.group(0) if addr else ""),
+                                       "attachments": atts}
+                reply = ("📧 Boss, email kis ko (email address ya client naam) aur "
+                         "kya likhun (subject + baat)? Bata do, bana ke dikha dunga."
+                         if not addr else
+                         f"📧 Boss, {addr.group(0)} ko kya bhejun? Subject + baat batao.")
                 await self._save_message("assistant", reply, "[]")
                 return {"reply": reply, "awaiting_input": True, "actions": []}
             return None
@@ -2813,11 +2818,34 @@ class ChatService:
         except Exception:
             return []
 
+    def _resolve_recipient_email(self, name: str) -> str | None:
+        """Bare naam ko clients DB se asli email mein badlo (warna None)."""
+        try:
+            from app.services.laptop_control.email_sender import EmailSender
+            return EmailSender._lookup_email_by_name(name)
+        except Exception:
+            return None
+
     async def _email_to_confirm_or_pick(self, to: str, subject: str, body: str,
                                         frm: str, atts: list[str]) -> dict:
-        """Agar user ne account specify nahi kiya AUR 1 se zyada Outlook accounts
-        hain → poochho KIS account se (clickable options). Warna seedha confirm
-        draft. General — kitne bhi accounts."""
+        """Recipient ka ASLI email pakka karo (bare naam → DB, warna pucho). Phir
+        agar account specify nahi + 1 se zyada Outlook accounts → poochho KIS se.
+        Warna confirm draft. General."""
+        # Recipient @email mein resolve karo — warna SMTP/Gmail error aata tha.
+        to = (to or "").strip()
+        if to and "@" not in to:
+            r = await asyncio.to_thread(self._resolve_recipient_email, to)
+            if r:
+                to = r
+        if not to or "@" not in to:
+            who = to or "is banday"
+            self._email_session = {"stage": "gather", "to": "", "attachments": atts,
+                                   "instruction": f"Yeh email bhejni hai. "
+                                   f"Subject: {subject}. Body: {body}."}
+            reply = (f"📧 Boss, '{who}' ka email address nahi mila — uska email "
+                     "address batao (jaise naam@example.com), phir bhej dunga.")
+            await self._save_message("assistant", reply, "[]")
+            return {"reply": reply, "awaiting_input": True, "actions": []}
         if not frm:
             accts = await asyncio.to_thread(self._email_accounts)
             if len(accts) > 1:
