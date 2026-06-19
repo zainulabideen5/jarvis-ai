@@ -1075,23 +1075,36 @@ class LaptopNative:
             pass
         return False
 
-    def _pick_open_dialog(self, file_path: str, timeout: float = 5.0) -> dict:
+    def _pick_open_dialog(self, file_path: str, timeout: float = 12.0) -> dict:
         """Fill a Windows 'Open' file dialog with the FULL path, then open it.
-        Robust + universal: waits for the dialog, focuses the 'File name' field
-        (UIA, else vision), PASTES the full path (clipboard — reliable for long
-        paths), then presses Enter (Enter = Open, more reliable than finding the
-        Open button). The full path means the current folder doesn't matter."""
+        Robust + universal: waits for the dialog (Teams/WebView slow se khulta —
+        timeout barha), STANDARD file-dialog class '#32770' YA title se detect
+        (title se zyada reliable, locale-proof), 'File name' field focus (UIA,
+        else vision), full path PASTE, phir Enter."""
+        from pywinauto import Desktop
         pag = _get_pyautogui()
-        # 1) wait for the OS dialog to actually appear
+        _TITLES = ("open", "choose file", "select file", "select", "upload")
+
+        def _find_dlg():
+            for w in Desktop(backend="uia").windows():
+                try:
+                    cls = (w.element_info.class_name or "").lower()
+                    if cls == "#32770":          # standard Win32 common file dialog
+                        return (w.window_text() or "Open")
+                    title = (w.window_text() or "").lower()
+                    if title and any(t in title for t in _TITLES):
+                        return (w.window_text() or "Open")
+                except Exception:
+                    continue
+            return None
+
+        # 1) wait for the OS dialog to actually appear (slow Teams ke liye 12s)
         dlg = None
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline and not dlg:
-            for name in ("Open", "Choose File to Upload", "Select File", "Select"):
-                if self._find_window(name) is not None:
-                    dlg = name
-                    break
+            dlg = _find_dlg()
             if not dlg:
-                time.sleep(0.3)
+                time.sleep(0.4)
         if not dlg:
             return {"ok": False, "error": "Open dialog nahi khula"}
 
