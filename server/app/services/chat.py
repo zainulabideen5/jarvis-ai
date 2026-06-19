@@ -655,6 +655,14 @@ class ChatService:
                         "actions": [{"action": "web_search", "status": "success"}]}
             # search se kuch na mila → niche Claude chat handle kar lega
 
+        # FILE SEND — laptop ki file (naam/jagah se) kisi contact ko bhejna →
+        # use TEXT ki tarah MAT bhejo; file DHOONDH kar ATTACH karke bhejo.
+        # Clarify se PEHLE — taake "download folder" ko "website download" na samjhe.
+        if route == "do":
+            fsend = await self._try_file_send(user_message)
+            if fsend is not None:
+                return fsend
+
         # CLARIFY — action (do) command ambiguous hai? (kaunsi file/kis ko/kaunsa
         # app/kya?) → GUESS mat karo, chhota sawal pooch lo. Brain decide karta
         # hai (keyword nahi); sirf tab jab WAQAI zaroori ho. Resume ho chuka ho
@@ -2399,6 +2407,76 @@ class ChatService:
         except Exception as e:
             log.warning("extract_shopping_failed", err=str(e)[:120])
         return None
+
+    async def _extract_file_send(self, message: str) -> dict | None:
+        """User apne LAPTOP ki koi FILE (naam/jagah se batayi — upload NAHI ki)
+        kisi contact ko kisi chat-app pe bhejna chahta hai? → {app, contact,
+        file_query, location}. Warna None. BRAIN, language-agnostic, koi hardcode nahi."""
+        import json as _json
+        prompt = (
+            "User apne laptop ki koi FILE/document/photo/video kisi CONTACT ko kisi "
+            "chat-app (WhatsApp/Teams/etc.) pe bhejna chahta hai — file ka NAAM ya "
+            "JAGAH (download/desktop/documents folder) bata kar (file upload NAHI ki)? "
+            "Agar HAAN, SIRF JSON do:\n"
+            '{"file_send":true,"app":"whatsapp|teams|slack|telegram|...",'
+            '"contact":"jis bande/number ko","file_query":"file ka naam jo dhoondhna",'
+            '"location":"agar bataya: downloads/desktop/documents — warna khali"}\n'
+            "Agar yeh file-send NAHI (text message, sawaal, koi aur kaam) to "
+            '{"file_send":false}. User KISI BHI language mein likhe — matlab samajh.\n\n'
+            f"User: {message}\nJSON:"
+        )
+        try:
+            client = self._get_client()
+            resp = await asyncio.to_thread(lambda: client.chat.completions.create(
+                model=self._config.groq_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0, max_tokens=150))
+            txt = (resp.choices[0].message.content or "").strip()
+            obj = _json.loads(txt[txt.find("{"):txt.rfind("}") + 1])
+            if (obj.get("file_send") and obj.get("app") and obj.get("contact")
+                    and obj.get("file_query")):
+                return {"app": str(obj["app"]).strip().lower(),
+                        "contact": str(obj["contact"]).strip(),
+                        "file_query": str(obj["file_query"]).strip(),
+                        "location": (obj.get("location") or "").strip()}
+        except Exception as e:
+            log.warning("extract_file_send_failed", err=str(e)[:120])
+        return None
+
+    async def _try_file_send(self, message: str) -> dict | None:
+        """Laptop ki file (naam/jagah se) kisi contact ko bhejna → file DHOONDHO +
+        FILE ki tarah attach karke bhejo (text ki tarah NAHI). General — koi bhi
+        file/contact/app. None agar yeh file-send nahi."""
+        info = await self._extract_file_send(message)
+        if not info:
+            return None
+        from app.services.laptop_control.files import FileOperations
+        results = await asyncio.to_thread(
+            FileOperations.find_files, info["file_query"],
+            info.get("location") or None, 8, False)   # include_folders=False
+        path = next((r["path"] for r in (results or []) if not r.get("is_folder")), None)
+        if not path:
+            loc = info.get("location") or "laptop"
+            reply = (f"📎 Boss, '{info['file_query']}' file {loc} mein nahi mili — "
+                     f"poora naam ya path batao, phir {info['contact']} ko bhej dunga.")
+            await self._save_message("assistant", reply, "[]")
+            return {"reply": reply, "awaiting_input": True, "actions": []}
+        from app.services.laptop_control.laptop_native import LaptopNative
+        nat = LaptopNative.get()
+        origin = await asyncio.to_thread(nat.active_window_title)
+        log.info("file_send_try", app=info["app"], contact=info["contact"], file=path)
+        res = await asyncio.to_thread(nat.chat_send_file, info["app"], info["contact"], path, "")
+        await asyncio.to_thread(self._post_send_cleanup, origin)
+        import os as _os
+        if res.get("ok"):
+            _default = f"'{_os.path.basename(path)}' {info['contact']} ko bhej di"
+            reply = f"✅ {res.get('msg') or _default}"
+        else:
+            reply = (f"⚠️ Boss, {res.get('msg') or res.get('error') or 'file nahi bhej paya'}. "
+                     "(Dobara bhejne se rok diya — khud dekh lein.)")
+        await self._save_message("assistant", reply, "[]")
+        return {"reply": reply, "actions": [{"action": "chat_send_file",
+                "status": "success" if res.get("ok") else "failed"}]}
 
     async def _try_shopping(self, message: str) -> dict | None:
         """Store se products + LIVE prices nikaal ke CHAT mein dikhao (vision se
