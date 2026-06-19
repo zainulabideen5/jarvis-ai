@@ -2763,12 +2763,12 @@ class ChatService:
         addr = _re.search(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", message)
         # "email/gmail" word (outlook NAHI — woh kholne ke liye bhi hota hai)
         email_word = bool(_re.search(r"\b(e[\s-]?mail|gmail)\b", low))
-        send_cue = bool(_re.search(
-            r"\b(bhej|bhejo|bhejna|bhajo|send|likh|likho|likhna|draft|reply|forward|"
-            r"karo|kardo|kar\s*do|kr\s*do|krna)\b", low))
-        # email-send intent: @address + (email-word ya send-action) YA email-word + send-action
-        definitely = bool(addr) and (email_word or send_cue)
-        if not (definitely or (email_word and send_cue)):
+        # "email kholo/open" = app kholna hai (send nahi) — usko chhod do.
+        open_cue = bool(_re.search(r"\b(khol|kholo|kholna|open|launch)\b", low))
+        # EMAIL-SEND intent (robust): @address ho, YA "email/gmail" word ho — aur
+        # "kholo/open" NA ho. (Pehle send-cue zaroori tha jo 'email kr' jaise short
+        # phrasing pe fail ho kar Gmail-error/chat_send pe gira deta tha.)
+        if open_cue or not (addr or email_word):
             return None
         ctx = await self._recent_context()
         draft = await self._compose_email(message, context=ctx, has_attachment=bool(atts))
