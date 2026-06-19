@@ -161,6 +161,7 @@ class VisionController:
                         "cx": (r.left + r.right) // 2,
                         "cy": (r.top + r.bottom) // 2,
                         "rect": (r.left, r.top, r.right, r.bottom),
+                        "el": e,   # UIA wrapper — invoke/set_focus se mouse hile baghair click
                     })
                 except Exception:
                     continue
@@ -268,11 +269,25 @@ class VisionController:
         kind = (action.get("action") or "").lower()
         ox, oy = offset
 
-        def _click_mark(n):
+        def _click_mark(n, typing=False):
             m = next((x for x in marks if x["idx"] == int(n)), None)
             if not m:
                 return False
-            pag.click(m["cx"], m["cy"])   # marks are absolute screen coords
+            # PEHLE UIA se — mouse cursor hile baghair (user saath kaam kar sake):
+            #   typing ke liye element ko FOCUS karo; warna button/link INVOKE karo.
+            # Na ho paye to hi ASLI mouse-click (fallback).
+            el = m.get("el")
+            if el is not None:
+                try:
+                    if typing:
+                        el.set_focus()
+                    else:
+                        el.invoke()
+                    time.sleep(0.4)
+                    return True
+                except Exception:
+                    pass
+            pag.click(m["cx"], m["cy"])   # fallback: real mouse (marks = screen coords)
             time.sleep(0.4)
             return True
 
@@ -295,7 +310,7 @@ class VisionController:
             nat.paste_text(action.get("text", ""), clear_first=False)
             return f"typed: {action.get('text','')[:40]}"
         if kind == "click_type":
-            if not _click_mark(action.get("mark")):
+            if not _click_mark(action.get("mark"), typing=True):
                 return "mark nahi mila"
             nat.paste_text(action.get("text", ""), clear_first=True)
             return f"clicked+typed: {action.get('text','')[:40]}"
