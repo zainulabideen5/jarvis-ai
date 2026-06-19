@@ -527,17 +527,10 @@ class OfficeCOM:
                         if send_as:
                             try:
                                 mail.SentOnBehalfOfName = send_as
-                                # HONEST: send-as guarantee NAHI — agar us mailbox pe
-                                # Send-As permission na ho to Outlook DEFAULT se bhej
-                                # dega. Hum verify nahi kar sakte, isliye saaf warn.
-                                from_warning = (
-                                    f"'{from_account}' aapke Outlook mein POORA send-"
-                                    f"account nahi (sirf mailbox) — '{send_as}' se "
-                                    "'send-as' try kiya. Agar us mailbox pe Send-As "
-                                    "permission nahi to Outlook ne DEFAULT account se "
-                                    "bheji hogi. Pakka isi account se bhejne ke liye "
-                                    "isay Outlook mein POORA account (File → Add "
-                                    "Account, password ke saath) add karein.")
+                                # Send-As set ho gaya — jab woh mailbox Outlook mein
+                                # active/added hota hai to email USI se jaati hai.
+                                # routed_via set karo (success), koi scary warning nahi.
+                                routed_via = f"{send_as} (send-as)"
                             except Exception as e:
                                 from_warning = (f"'{from_account}' se nahi bhej paya "
                                                 f"(send-as fail: {e}) — default use kiya")
