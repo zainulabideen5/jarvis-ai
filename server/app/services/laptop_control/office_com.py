@@ -497,8 +497,21 @@ class OfficeCOM:
                     if matched_account is not None:
                         try:
                             mail.SendUsingAccount = matched_account
-                        except Exception as e:
-                            from_warning = f"SendUsingAccount set fail: {e}"
+                        except Exception:
+                            # SendUsingAccount kabhi COM/RPC error (-2147417851)
+                            # deta hai (marshaling). Tab SentOnBehalfOfName se us
+                            # account se bhejo — reliable, no warning.
+                            acc_smtp = (getattr(matched_account, "SmtpAddress", "")
+                                        or "").strip()
+                            try:
+                                if acc_smtp:
+                                    mail.SentOnBehalfOfName = acc_smtp
+                                    routed_via = acc_smtp
+                                else:
+                                    from_warning = "chune account ko set nahi kar paya"
+                            except Exception as e2:
+                                from_warning = (f"chune account ko set nahi kar paya "
+                                                f"({str(e2)[:60]}) — default se gayi")
                     else:
                         # Koi sendable ACCOUNT match nahi hua. Shayad yeh ek
                         # mailbox/STORE hai (jaise info@... jise user parh sakta hai
