@@ -682,15 +682,17 @@ class ChatService:
             origin = await asyncio.to_thread(nat.active_window_title)
 
             res = None
-            # SPEED: if this is actually a known chat-app send, do it INSTANTLY
-            # via the deterministic path — no slow per-step vision (the user: "bot
-            # late message gaya"). Vision is the fallback only if that fails.
+            # CHAT-APP MESSAGE SEND (WhatsApp/Teams/koi bhi) → CONFIRM-first:
+            # Bhej do / Edit / Cancel draft dikhao, SEEDHA mat bhejo (har app pe
+            # confirm — user ne kaha sirf Teams nahi). Engine ka needs_confirm draft
+            # banata hai; confirm pe deterministic chat_send (fast) chalta hai.
             parsed = self._parse_chat_send(user_message)
             if parsed:
-                app, contact, message = parsed
-                res = await asyncio.to_thread(nat.chat_send, app, contact, message)
-                if not res.get("ok"):
-                    res = None     # deterministic couldn't — fall to vision
+                engine_result = await self._run_engine_task(user_message, needs_confirm=True)
+                await self._save_message(
+                    "assistant", engine_result.get("reply", ""),
+                    json.dumps(engine_result.get("actions", [])))
+                return engine_result
             # SHOPPING: "X store se Y ke prices batao / order karo" — store ke
             # live product data se prices CHAT mein (vision se nahi; reliable +
             # kisi bhi store pe). Kuch na mile to vision browser pe try karega.
