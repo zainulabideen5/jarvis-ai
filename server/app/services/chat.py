@@ -2470,10 +2470,12 @@ class ChatService:
             self._pending_actions[token] = pending
         reply = (f"📎 **{self._app_label(info['app'])} → {info['contact']}**\n\n"
                  f"File: **{_os.path.basename(path)}**\n\n"
-                 "Bhej dun, Boss? ✅ **Bhej do** · ❌ **Cancel**")
+                 "Bhej dun, Boss? ✅ **Bhej do** · ✏️ **Edit** (kis ko) · ❌ **Cancel**")
         await self._save_message("assistant", reply, "[]")
         return {"reply": reply, "actions": [],
-                "pending": [{"token": token, "action": pending}]}
+                "pending": [{"token": token, "action": pending, "editable": True,
+                             "app": info["app"], "contact": info["contact"],
+                             "message": info["contact"]}]}
 
     async def _try_shopping(self, message: str) -> dict | None:
         """Store se products + LIVE prices nikaal ke CHAT mein dikhao (vision se
@@ -3486,12 +3488,33 @@ class ChatService:
         sirf draft update hota hai. General: koi bhi app, koi bhi message."""
         async with self._pending_lock:
             pending = self._pending_actions.get(token)
-        if not pending or pending.get("action") != "universal_task":
+        if not pending:
             return {"reply": "Yeh draft ab available nahi (expire ho gaya). Dobara command do, Boss.",
                     "actions": []}
         new_message = (new_message or "").strip()
         if not new_message:
-            return {"reply": "Edit ke liye naya message khali hai — kuch likho phir bhejo.",
+            return {"reply": "Edit ke liye kuch likho phir bhejo.", "actions": []}
+
+        # FILE-send draft ka Edit → naya RECIPIENT set karo, file/app wahi.
+        if pending.get("action") == "send_file_native":
+            import os as _os
+            p = pending.setdefault("params", {})
+            p["contact"] = new_message
+            async with self._pending_lock:
+                if token in self._pending_actions:
+                    self._pending_actions[token]["params"] = p
+                    pending = self._pending_actions[token]
+            reply = (f"✏️ Update:\n\n📎 **{self._app_label(p.get('app','') )} → {new_message}**\n\n"
+                     f"File: **{_os.path.basename(p.get('path',''))}**\n\n"
+                     "Bhej dun? ✅ **Bhej do** · ✏️ **Edit** · ❌ **Cancel**")
+            await self._save_message("assistant", reply, "[]")
+            return {"reply": reply, "actions": [],
+                    "pending": [{"token": token, "action": pending, "editable": True,
+                                 "app": p.get("app", ""), "contact": new_message,
+                                 "message": new_message}]}
+
+        if pending.get("action") != "universal_task":
+            return {"reply": "Yeh draft ab available nahi (expire ho gaya). Dobara command do, Boss.",
                     "actions": []}
         params = pending.setdefault("params", {})
         pd = dict(params.get("parsed") or {})
