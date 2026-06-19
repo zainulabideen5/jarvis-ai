@@ -2818,13 +2818,42 @@ class ChatService:
         except Exception:
             return []
 
-    def _resolve_recipient_email(self, name: str) -> str | None:
-        """Bare naam ko clients DB se asli email mein badlo (warna None)."""
+    async def _resolve_recipient_email(self, name: str) -> str | None:
+        """Bare naam ko asli email mein badlo: (1) clients DB, (2) USER MEMORY
+        (agar kabhi 'X ka email Y hai' yaad karwaya ho). Warna None."""
+        import re as _re
+        # 1) clients DB
         try:
             from app.services.laptop_control.email_sender import EmailSender
-            return EmailSender._lookup_email_by_name(name)
+            db = await asyncio.to_thread(EmailSender._lookup_email_by_name, name)
+            if db:
+                return db
         except Exception:
-            return None
+            pass
+        # 2) user memory — koi yaad-dasht jisme is naam ke saath email ho
+        try:
+            from app.services.user_memory import UserMemory
+            nlow = (name or "").lower().strip()
+            for m in await UserMemory.all(200):
+                if nlow and nlow in m.lower():
+                    em = _re.search(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", m)
+                    if em:
+                        return em.group(0)
+        except Exception:
+            pass
+        return None
+
+    async def _remember_email_contact(self, name: str, email: str) -> None:
+        """Recipient ka email yaad rakho taake agli baar naam se bhej saken."""
+        name = (name or "").strip()
+        email = (email or "").strip()
+        if not name or "@" not in email or "@" in name:
+            return
+        try:
+            from app.services.user_memory import UserMemory
+            await UserMemory.remember(f"{name} ka email {email} hai")
+        except Exception:
+            pass
 
     async def _email_to_confirm_or_pick(self, to: str, subject: str, body: str,
                                         frm: str, atts: list[str]) -> dict:
@@ -2834,7 +2863,7 @@ class ChatService:
         # Recipient @email mein resolve karo — warna SMTP/Gmail error aata tha.
         to = (to or "").strip()
         if to and "@" not in to:
-            r = await asyncio.to_thread(self._resolve_recipient_email, to)
+            r = await self._resolve_recipient_email(to)
             if r:
                 to = r
         if not to or "@" not in to:
@@ -2920,6 +2949,39 @@ class ChatService:
             return {"display": f"{smtps[0]} (default)", "send": ""}
         return {"display": "default Outlook account", "send": ""}
 
+    async def _email_msg_continues(self, message: str) -> bool:
+        """BRAIN decide karta hai (keyword NAHI, kisi bhi language): JARVIS abhi
+        ek email bana raha tha aur detail poochi thi — yeh naya message USI email
+        ka hissa hai (recipient/subject/content/confirm), ya BILKUL alag baat/
+        sawaal/command? True = email ka hissa; False = alag (session chhod do).
+        Fail/shak → True (email mein raho — safe)."""
+        msg = (message or "").strip()
+        if not msg:
+            return True
+        prompt = (
+            "JARVIS abhi user ke liye ek EMAIL bana raha tha aur usne email ki koi "
+            "detail poochi thi (kis ko / subject / message). User ka naya message "
+            "neeche hai. Batao: yeh message USI email ke liye hai (recipient ka "
+            "naam ya email, subject, message ka matn, ya 'haan bhej do' / 'cancel'), "
+            "YA yeh ek BILKUL ALAG baat/sawaal/command hai (kuch aur poochna, koi "
+            "aur kaam)? SIRF JSON: {\"email_detail\": true|false}\n"
+            "User KISI BHI language/script mein likhe — lafz nahi, MATLAB samajh.\n\n"
+            f"Naya message: {msg}\nJSON:"
+        )
+        try:
+            client = self._get_client()
+            resp = await asyncio.to_thread(lambda: client.chat.completions.create(
+                model=self._config.groq_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0, max_tokens=20))
+            txt = (resp.choices[0].message.content or "").lower()
+            # 'email_detail': false → alag baat. Warna (true ya shak) → email mein raho.
+            if "false" in txt:
+                return False
+            return True
+        except Exception:
+            return True
+
     async def _resume_email_session(self, message: str) -> dict | None:
         """Draft confirm/cancel/edit handle karo."""
         import re as _re
@@ -2953,11 +3015,11 @@ class ChatService:
         # GATHER stage — humne sawal pucha tha, ab yeh uska jawab hai. Original
         # instruction + Boss ka jawab milaa ke dobara compose karo.
         if sess.get("stage") == "gather":
-            # ESCAPE: agar message saaf ek NAYA/unrelated command hai (app kholo,
-            # undo/redo) to email session chhod do — warna woh hijack ho jata tha.
-            # Conservative cues (email-body content mein yeh shabd kam aate hain).
-            if (_re.search(r"\b(kholo|khol\s*do|launch|chalu\s*kar|undo|redo)\b", low)
-                    or _re.match(r"^\s*open\s+\w", low)):
+            # ESCAPE: agar yeh message email-detail nahi balki ALAG baat/sawaal/
+            # command hai to email session CHHOD do + re-route. Faisla BRAIN
+            # karta hai (keyword NAHI — har language mein chale). @email ho to
+            # clearly email-jawab hai, chhodne ki zaroorat nahi.
+            if "@" not in message and not await self._email_msg_continues(message):
                 self._email_session = None
                 return None
             addr2 = _re.search(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", message)
@@ -3029,6 +3091,14 @@ class ChatService:
                 else:
                     msg = (f"COM se nahi gayi ({msg}); UI/vision se bhi nahi: "
                            f"{vres.get('reply', vres.get('error', vres.get('msg','')))}")
+            # Email gayi → recipient ka email YAAD rakho (har contact memory mein —
+            # agli baar naam se bhej saken; lookup substring se naam match karta hai).
+            if ok and "@" in (sess.get("to") or ""):
+                try:
+                    from app.services.user_memory import UserMemory
+                    await UserMemory.remember(f"Email contact: {sess['to']}")
+                except Exception:
+                    pass
             self._email_session = None
             # msg ke andar already emoji (✅/⚠️/❌) ho to dobara prefix mat karo
             # (EmailSender honest emoji deta hai). startswith — kyunki ⚠️ do-codepoint
