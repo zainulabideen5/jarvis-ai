@@ -1060,12 +1060,15 @@ class LaptopNative:
                         continue
                     nm = (e.element_info.name or "").lower()
                     if nm and any(ln in nm for ln in low):
+                        # REAL click PEHLE — WebView/Electron (Teams) UIA invoke ko
+                        # CHUP-CHAP ignore kar deta hai (error nahi, par kaam bhi nahi
+                        # hota). click_input reliably trigger karta hai; invoke fallback.
                         try:
-                            e.invoke()            # UIA — mouse hile baghair
+                            e.click_input()
                             return True
                         except Exception:
                             try:
-                                e.click_input()   # fallback: real click
+                                e.invoke()
                                 return True
                             except Exception:
                                 continue
