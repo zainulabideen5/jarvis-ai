@@ -112,7 +112,17 @@ class EmailSender:
                                       "nahi gayi — zaroorat ho to woh account Outlook "
                                       "mein add karein.)")
                     src = f" ({via} se)" if via else " (via Outlook desktop)"
-                    return True, f"✅ Email bhej diya {to_str} ko{src}"
+                    # HONEST guide: agar user ne KHAAS account chuna tha — Outlook ka
+                    # 'active/default' account COM ko override kar sakta hai, to email
+                    # us active account se ja sakti hai. Saaf bata do + raasta batao.
+                    note = ""
+                    if (from_account or "").strip():
+                        note = ("\n\nℹ️ Note: agar Outlook mein koi aur account 'active' "
+                                "khula ho to email us se ja sakti hai (Outlook ki limitation). "
+                                f"Pakka '{from_account.strip()}' se bhejne ke liye: Outlook → "
+                                "File → Account Settings → us account ko **Set as Default**; "
+                                "ya mujhe us account ka SMTP/app-password do — phir 100% usi se jayegi.")
+                    return True, f"✅ Email bhej diya {to_str} ko{src}{note}"
                 # COM ATTEMPT hua par fail — SMTP pe MAT giro (double-send / galat
                 # recipient ka risk). Honest failure return karo.
                 log.info("outlook_com_attempt_failed", error=r_oc.get("error", ""))
