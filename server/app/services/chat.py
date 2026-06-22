@@ -413,6 +413,7 @@ class ChatService:
         user_message: str,
         confirm_token: str | None = None,
         attachments: list[str] | None = None,
+        allow_spawn: bool = True,
     ) -> dict:
         """Process a chat message and return response + any actions.
 
@@ -421,6 +422,9 @@ class ChatService:
             `POST /api/chat/upload`. When present AND the message resolves to
             a send_* action, these paths are forced into the action's
             `attachment` param so the LLM doesn't have to search the laptop.
+        allow_spawn: True (default) → fresh actionable task(s) ko background
+            AGENTS ko de do (parallel). False → inline chalao (agent KHUD apne
+            andar yeh False rakhta hai taake recursion na ho).
         """
         client = self._get_client()
         attachments = [a for a in (attachments or []) if a]
@@ -438,6 +442,15 @@ class ChatService:
                              "name": p.name})
             user_actions = json.dumps([{"attachments": atts}])
         await self._save_message("user", user_message, user_actions)
+
+        # AUTO-MEMORY (background): har user message se DURABLE facts khud nikaal kar
+        # yaad rakho (naam, pasand, contact, zaroori detail, faisla). Non-blocking —
+        # reply slow nahi hoti. Sirf asli user message pe (agent-internal/confirm nahi).
+        if allow_spawn and not confirm_token:
+            try:
+                asyncio.create_task(self._auto_remember(user_message))
+            except Exception:
+                pass
 
         # STOP — let the user halt a running task at any time. Set the flag and
         # return immediately; the running engine/vision loop bails next step.
@@ -464,6 +477,20 @@ class ChatService:
                 "reply": verification_result["reply"],
                 "actions": actions_payload,
             }
+
+        # ---- MULTI-AGENT: fresh actionable task(s) → background AGENTS (parallel) ----
+        # User hukum deta ja → har kaam ek alag agent ko, sab saath chalein,
+        # dashboard mein dikhein. Continuations (confirm/clarify/email/vision/
+        # engine resume) ko HAATH nahi lagate (woh inline hi chalti rahein).
+        # allow_spawn=False jab agent KHUD apne andar chat() call kare (no recursion).
+        if (allow_spawn and not confirm_token and not attachments
+                and not getattr(self, "_vision_session", None)
+                and not getattr(self, "_engine_session", None)
+                and not getattr(self, "_clarify_session", None)
+                and not getattr(self, "_email_session", None)):
+            tasks = await self._split_into_tasks(user_message)
+            if tasks:
+                return await self._spawn_agents(tasks)
 
         # RESUME a paused VISION task — vision asked a clarifying question
         # (e.g. "cheese ya zinger?"); this message is the answer → re-run the
@@ -1974,6 +2001,49 @@ class ChatService:
         except Exception:
             return None
 
+    async def _auto_remember(self, message: str) -> None:
+        """BACKGROUND: user ke message se DURABLE facts khud nikaal kar yaad rakho —
+        naam, pasand/napasand, kisi ka contact, zaroori personal/business detail,
+        koi faisla/rule. Clutter se bachne ke liye sirf KAAM ki baatein; dedup
+        UserMemory khud karta hai. Har user (per machine) ki apni strong memory."""
+        import json as _json
+        message = (message or "").strip()
+        if len(message) < 6:
+            return
+        prompt = (
+            "User ke is message se woh DURABLE facts nikaalo jo LONG-TERM yaad rakhne "
+            "layak hain: user ka naam, pasand/napasand, kisi ka contact/number/email, "
+            "zaroori personal ya business detail, ya koi faisla/rule jo user ne set "
+            "kiya. Har fact ek chhota self-contained jumla (jaise 'User ka naam X hai', "
+            "'User ko Y pasand hai', 'Z ka number 03.. hai'). SIRF JSON do:\n"
+            '{"facts":["..."]}\n'
+            "Agar koi durable fact NAHI (greeting, sawaal, aam baat-cheet, ek-baar ka "
+            "command jaise 'file banao'/'message bhejo', chit-chat) to {\"facts\":[]}. "
+            "Zyada se zyada 4 facts. KISI BHI language samajh.\n\n"
+            f"User: {message}\nJSON:"
+        )
+        try:
+            client = self._get_client()
+            resp = await asyncio.to_thread(lambda: client.chat.completions.create(
+                model=self._config.groq_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0, max_tokens=300))
+            txt = (resp.choices[0].message.content or "").strip()
+            obj = _json.loads(txt[txt.find("{"):txt.rfind("}") + 1])
+            facts = [str(f).strip() for f in (obj.get("facts") or []) if str(f).strip()]
+            if not facts:
+                return
+            from app.services.user_memory import UserMemory
+            saved = 0
+            for f in facts[:4]:
+                r = await UserMemory.remember(f)
+                if r.get("ok") and not r.get("dup"):
+                    saved += 1
+            if saved:
+                log.info("auto_memory_saved", count=saved)
+        except Exception as e:
+            log.warning("auto_memory_failed", err=str(e)[:120])
+
     async def _remember_fact(self, message: str) -> dict:
         """User ki baat se ek SAAF fact nikaal ke per-user memory mein save karo.
         General + language-agnostic (brain fact nikaalta hai). Confirm reply deta hai."""
@@ -2320,6 +2390,13 @@ class ChatService:
             # any TRAILING send verb, then stray quotes.
             after = _re.sub(rf"(?i)^\s*({_APP})\s+({_PREP})?\s*", "", after)
             msg = after.strip().strip("'\"").strip()
+            # "message bhejo: <text>" / "likho: <text>" → colon ke baad wala ASLI
+            # message (command words colon se pehle — woh message ka hissa nahi).
+            cm = _re.match(r"(?i)^([^:]{0,30}):\s*(.+)$", msg)
+            if cm and _re.search(
+                    r"(?i)(message|msg|bhej|bhaj|likh|bol|keh|send|kar|kr)",
+                    cm.group(1)):
+                msg = cm.group(2).strip()
             msg = _re.sub(
                 r"(?i)^\s*(message|msg|likho?|likh|bol\s*do|bol|keh\s*do|keh|"
                 r"send|bhej\w*|bhaj\w*|kar\s*do|karo|kar|kr\s*do|kr)\s+",
@@ -2410,6 +2487,67 @@ class ChatService:
             log.warning("extract_shopping_failed", err=str(e)[:120])
         return None
 
+    async def _split_into_tasks(self, message: str) -> list[str]:
+        """Message ek ya KAI actionable KAAM hai? Har alag kaam ko self-contained
+        string mein todo → list. Sawaal/baat/greeting/'haan'/recall = [] (kaam nahi).
+        BRAIN, language-agnostic. Multi-agent spawn ke liye."""
+        import json as _json
+        message = (message or "").strip()
+        if len(message) < 4:
+            return []
+        prompt = (
+            "User ka message ek ya KAI alag-alag KAAM (actionable command) hai jo "
+            "JARVIS background mein kar sakta? Jaise: file/Excel banao, kisi ko "
+            "message/email bhejo, kuch open karo, order karo, research/dhoondo, "
+            "kuch likho/save karo, kisi app/site pe kaam. Har ALAG kaam ko ek "
+            "self-contained string banao (uska contact/file/detail usi string mein). "
+            "SIRF JSON do:\n"
+            '{"tasks":["kaam 1","kaam 2"]}\n'
+            "Agar yeh SAWAAL, aam baat-cheet, greeting/salam, info maangna, "
+            "yaad-dasht (remember/recall), ya sirf 'haan/yes/ok/theek' jaisa jawab "
+            "hai (koi background kaam NAHI) — to {\"tasks\":[]}. "
+            "Ek hi kaam ho to bhi ek-item list do. KISI BHI language samajh.\n\n"
+            f"User: {message}\nJSON:"
+        )
+        try:
+            client = self._get_client()
+            resp = await asyncio.to_thread(lambda: client.chat.completions.create(
+                model=self._config.groq_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0, max_tokens=400))
+            txt = (resp.choices[0].message.content or "").strip()
+            obj = _json.loads(txt[txt.find("{"):txt.rfind("}") + 1])
+            tasks = [str(t).strip() for t in (obj.get("tasks") or []) if str(t).strip()]
+            return tasks[:12]      # safety cap (no runaway)
+        except Exception as e:
+            log.warning("split_into_tasks_failed", err=str(e)[:120])
+            return []
+
+    async def _spawn_agents(self, tasks: list[str]) -> dict:
+        """Har task ek background AGENT ko de do (parallel). Foran reply (block NAHI).
+        Har agent autonomous kaam karta hai; complete hone pe dashboard mein dikhta."""
+        from app.services.agent_manager import AgentManager
+        mgr = AgentManager.get()
+        spawned = []
+        for t in tasks:
+            r = await mgr.spawn(t)
+            if r.get("ok"):
+                spawned.append(r)
+        if not spawned:
+            return {"reply": "Hmm, agent nahi laga paya — dobara bolo, Boss.", "actions": []}
+        if len(spawned) == 1:
+            s = spawned[0]
+            reply = (f"🤖 **Agent #{s['num']} laga diya** — background mein kaam shuru:\n"
+                     f"> {s['task']}\n\nHo jaane pe batata hoon. (Dashboard → **Agents** mein live dekho.)")
+        else:
+            lines = "\n".join(f"- 🤖 **Agent #{s['num']}**: {s['task']}" for s in spawned)
+            reply = (f"🤖 **{len(spawned)} agents laga diye** — sab **PARALLEL** kaam kar rahe:\n"
+                     f"{lines}\n\nHar ek complete pe batata jaunga. (Dashboard → **Agents** mein live.)")
+        await self._save_message("assistant", reply, "[]")
+        return {"reply": reply, "actions": [],
+                "agents": [{"job_id": s["job_id"], "num": s["num"], "task": s["task"]}
+                           for s in spawned]}
+
     async def _extract_file_send(self, message: str) -> dict | None:
         """User apne LAPTOP ki koi FILE (naam/jagah se batayi — upload NAHI ki)
         kisi contact ko kisi chat-app pe bhejna chahta hai? → {app, contact,
@@ -2423,6 +2561,12 @@ class ChatService:
             '{"file_send":true,"app":"whatsapp|teams|slack|telegram|...",'
             '"contact":"jis bande/number ko","file_query":"file ka naam jo dhoondhna",'
             '"location":"agar bataya: downloads/desktop/documents — warna khali"}\n'
+            "ZAROORI: file_send:true SIRF tab jab user SAAF taur pe koi FILE/document/"
+            "photo/video/pdf bhejna chahe — yaani 'file/document/photo/pdf/attach' jaisa "
+            "lafz ho YA file ka naam EXTENSION (.pdf/.docx/.jpg/.png...) ke saath ho. "
+            "Agar user ek TEXT MESSAGE/baat bhej raha hai (kuch kehna hai) — chahe usme "
+            "koi bhi lafz (jaise 'prefix','test','file') ho — woh file-send NAHI hai. "
+            "Quoted sentence ('...') = message, file nahi.\n"
             "Agar yeh file-send NAHI (text message, sawaal, koi aur kaam) to "
             '{"file_send":false}. User KISI BHI language mein likhe — matlab samajh.\n\n'
             f"User: {message}\nJSON:"
@@ -3372,7 +3516,13 @@ class ChatService:
                 if parsed:
                     app, contact, message = parsed
                     log.info("deterministic_send_try", app=app, contact=contact, msg=message[:40])
-                    native = await asyncio.to_thread(nat.chat_send, app, contact, message)
+                    if (app or "").lower() == "whatsapp":
+                        # WhatsApp text → JARVIS browser (web, background) — desktop nahi.
+                        from app.services.web_browser import WebBrowser
+                        native = await asyncio.to_thread(
+                            WebBrowser.get().wa_send_text, contact, message)
+                    else:
+                        native = await asyncio.to_thread(nat.chat_send, app, contact, message)
 
             if native is not None:
                 if native.get("ok"):
@@ -3453,6 +3603,23 @@ class ChatService:
         if pending.get("action") == "send_file_native":
             p = pending.get("params", {})
             import os as _os
+            # WhatsApp → WEB path (background Playwright, reliable, mouse na chhine).
+            # Baqi apps (Teams desktop, etc.) → desktop UIA path.
+            if (p.get("app") or "").lower() == "whatsapp":
+                # JARVIS ke apne dedicated browser (startup pe launch, user ne ek
+                # baar WhatsApp login kiya) se bhejo — background, reliable.
+                from app.services.web_browser import WebBrowser
+                wres = await asyncio.to_thread(
+                    WebBrowser.get().wa_send_file, p["contact"], p["path"], True)
+                if wres.get("ok"):
+                    reply = (f"✅ '{_os.path.basename(p['path'])}' {p['contact']} ko "
+                             "WhatsApp pe bhej di (verify: chat mein file dikh rahi)")
+                else:
+                    reply = (f"⚠️ Boss, WhatsApp file nahi bhej paya: "
+                             f"{wres.get('error') or 'unknown'}. (Dobara bhejne se rok diya — khud dekh lein.)")
+                await self._save_message("assistant", reply, "[]")
+                return {"reply": reply, "actions": [{"action": "wa_send_file",
+                        "status": "success" if wres.get("ok") else "failed"}]}
             from app.services.laptop_control.laptop_native import LaptopNative
             nat = LaptopNative.get()
             origin = await asyncio.to_thread(nat.active_window_title)

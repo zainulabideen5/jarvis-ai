@@ -28,6 +28,13 @@ export default function ChatPage() {
   const [editText, setEditText] = useState('');
   // Image lightbox — chat ke andar full image (X se band), Claude jaisa
   const [lightboxUrl, setLightboxUrl] = useState(null);
+  // Start-Meeting modal (professional dialog instead of browser prompts)
+  const [showMeetingModal, setShowMeetingModal] = useState(false);
+  const [meetingTitle, setMeetingTitle] = useState('');
+  const [meetingClientId, setMeetingClientId] = useState('');  // '' = auto-detect
+  const [clientsList, setClientsList] = useState([]);
+  const [startingMeeting, setStartingMeeting] = useState(false);
+  const [endingMeeting, setEndingMeeting] = useState(false);
   // Email draft edit — kaunsi message ka draft edit ho raha + uska text
   const [emailEditMsg, setEmailEditMsg] = useState(null);
   const [emailEditText, setEmailEditText] = useState('');
@@ -124,24 +131,50 @@ export default function ChatPage() {
     }
   };
 
+  // Open the professional Start-Meeting dialog (loads clients for the dropdown)
   const handleStartMeeting = async () => {
-    const title = prompt('Meeting ka naam daal (optional):') || '';
+    setMeetingTitle('');
+    setMeetingClientId('');
+    setShowMeetingModal(true);
     try {
-      await api.startMeeting(title);
+      const clients = await api.getClients();
+      setClientsList(Array.isArray(clients) ? clients : []);
+    } catch {
+      setClientsList([]);
+    }
+  };
+
+  // Actually start the meeting from the modal selections
+  const confirmStartMeeting = async () => {
+    setStartingMeeting(true);
+    try {
+      const cid = meetingClientId ? parseInt(meetingClientId, 10) : null;
+      await api.startMeeting(meetingTitle.trim(), cid);
       setJarvisListening(true);
+      setShowMeetingModal(false);
     } catch (err) {
       alert(`Failed: ${err.message}`);
+    } finally {
+      setStartingMeeting(false);
     }
   };
 
   const handleEndMeeting = async () => {
-    if (!confirm('Meeting khatam karna hai? Summary generate hoga.')) return;
+    if (endingMeeting) return;  // guard: ignore double-clicks
+    if (!confirm('Meeting khatam karna hai? Summary + tasks ban jayenge.')) return;
+    setEndingMeeting(true);
+    // Optimistically clear so the button switches away immediately (no double-press)
+    setActiveMeeting(null);
+    setJarvisListening(false);
     try {
       await api.endMeeting();
-      setActiveMeeting(null);
-      setJarvisListening(false);
     } catch (err) {
-      alert(`Failed: ${err.message}`);
+      // already_ended is fine (double-press) — only alert real failures
+      if (!String(err.message || '').includes('pehle se band')) {
+        alert(`Failed: ${err.message}`);
+      }
+    } finally {
+      setEndingMeeting(false);
     }
   };
 
@@ -930,6 +963,72 @@ export default function ChatPage() {
           {uploading ? 'Upload...' : 'Send'}
         </button>
       </div>
+
+      {/* Start-Meeting modal — professional dialog (title + client) */}
+      {showMeetingModal && (
+        <div
+          onClick={() => !startingMeeting && setShowMeetingModal(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6"
+          style={{ backdropFilter: 'blur(4px)' }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-2xl bg-[#1a1a2e] border border-purple-500/30 shadow-2xl p-6"
+          >
+            <div className="flex items-center gap-2 mb-5">
+              <span className="text-2xl">📋</span>
+              <h2 className="text-lg font-semibold text-white">Start Meeting</h2>
+            </div>
+
+            {/* Title */}
+            <label className="block text-xs text-gray-400 mb-1">Meeting ka naam (optional)</label>
+            <input
+              autoFocus
+              type="text"
+              value={meetingTitle}
+              onChange={(e) => setMeetingTitle(e.target.value)}
+              placeholder="e.g. Client sync — website project"
+              className="w-full mb-4 px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white text-sm focus:border-purple-400 focus:outline-none"
+            />
+
+            {/* Client select */}
+            <label className="block text-xs text-gray-400 mb-1">Client</label>
+            <select
+              value={meetingClientId}
+              onChange={(e) => setMeetingClientId(e.target.value)}
+              className="w-full mb-2 px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white text-sm focus:border-purple-400 focus:outline-none"
+            >
+              <option value="">🔍 Auto-detect (JARVIS khud naam pakdega — naya client)</option>
+              {clientsList.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}{c.company ? ` — ${c.company}` : ''}
+                </option>
+              ))}
+            </select>
+            <p className="text-[11px] text-gray-500 mb-5">
+              Known client chuno, ya auto-detect chhod do — meeting ke tasks isi client ke andar jayenge.
+            </p>
+
+            {/* Actions */}
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowMeetingModal(false)}
+                disabled={startingMeeting}
+                className="px-4 py-2 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-white/5 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmStartMeeting}
+                disabled={startingMeeting}
+                className="px-5 py-2 rounded-lg text-sm font-medium bg-purple-600 hover:bg-purple-500 text-white disabled:opacity-50"
+              >
+                {startingMeeting ? 'Starting…' : '▶ Start Meeting'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Image lightbox — chat ke andar full image, X / backdrop / Esc se band */}
       {lightboxUrl && (

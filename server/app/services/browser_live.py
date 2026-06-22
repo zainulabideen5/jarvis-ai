@@ -138,7 +138,128 @@ class LiveBrowser:
             pg.goto(url, wait_until="domcontentloaded", timeout=45000)
         return pg.evaluate(js)
 
+    def _wa_send_file_impl(self, contact: str, filepath: str):
+        """User ke APNE Chrome (CDP) ki khuli WhatsApp tab pe contact ko file bhejo.
+        Deterministic (koi brain nahi). WhatsApp user ki session se logged-in hona chahiye."""
+        if not os.path.isfile(filepath):
+            return {"ok": False, "error": f"file nahi mili: {filepath}"}
+        ctx = self._context()
+        pg = None
+        for p in ctx.pages:
+            try:
+                if "web.whatsapp.com" in (p.url or ""):
+                    pg = p
+                    break
+            except Exception:
+                pass
+        if pg is None:
+            pg = ctx.pages[0] if ctx.pages else ctx.new_page()
+            pg.goto("https://web.whatsapp.com", wait_until="domcontentloaded",
+                    timeout=45000)
+        try:
+            pg.bring_to_front()
+        except Exception:
+            pass
+        state = "loading"
+        for _ in range(25):
+            state = pg.evaluate(
+                "()=>{if(document.querySelector('div[contenteditable=true][data-tab=\"3\"]')"
+                "||document.querySelector('[aria-label=\"Search input textbox\"]'))return 'ready';"
+                "if(document.querySelector('canvas[aria-label]')||/scan the qr|link.*device|"
+                "scan to log/i.test(document.body?document.body.innerText:''))return 'qr';"
+                "return 'loading';}")
+            if state in ("ready", "qr"):
+                break
+            pg.wait_for_timeout(1000)
+        if state == "qr":
+            return {"ok": False, "error": "is Chrome mein WhatsApp logged-in nahi (QR aa raha)"}
+        if state != "ready":
+            return {"ok": False, "error": "WhatsApp Web load nahi hua (timeout)"}
+        try:
+            search = (pg.query_selector('div[contenteditable="true"][data-tab="3"]')
+                      or pg.query_selector('[aria-label="Search input textbox"]'))
+            if not search:
+                return {"ok": False, "error": "search box nahi mila"}
+            search.click()
+            pg.wait_for_timeout(400)
+            pg.evaluate(
+                "(t)=>{const s=document.querySelector("
+                "'div[contenteditable=true][data-tab=\"3\"]')||document.querySelector("
+                "'[aria-label=\"Search input textbox\"]');s.focus();"
+                "document.execCommand('selectAll',false,null);"
+                "document.execCommand('insertText',false,t);}", contact)
+            pg.wait_for_timeout(2000)
+        except Exception as e:
+            return {"ok": False, "error": f"search fail: {str(e)[:120]}"}
+        opened = pg.evaluate(
+            "(name)=>{const n=name.toLowerCase();"
+            "let e=[...document.querySelectorAll('span[title]')].find(x=>"
+            "(x.getAttribute('title')||'').toLowerCase()===n);"
+            "if(!e)e=[...document.querySelectorAll('span[title]')].find(x=>"
+            "(x.getAttribute('title')||'').toLowerCase().includes(n));"
+            "if(e){(e.closest('div[role=listitem]')||e).click();return true;}return false;}",
+            contact)
+        if not opened:
+            return {"ok": False, "error": f"'{contact}' chat list mein nahi mila"}
+        pg.wait_for_timeout(2000)
+        pg.evaluate(
+            "()=>{const a=document.querySelector('span[data-icon=\"plus-rounded\"]')"
+            "||document.querySelector('span[data-icon=\"attach-menu-plus\"]')"
+            "||document.querySelector('div[title=\"Attach\"]')"
+            "||document.querySelector('span[data-icon=\"clip\"]')"
+            "||document.querySelector('button[aria-label=\"Attach\"]');"
+            "if(a){(a.closest('button')||a.closest('div[role=button]')||a).click();}}")
+        pg.wait_for_timeout(1200)
+        uploaded = False
+        try:
+            with pg.expect_file_chooser(timeout=8000) as fc:
+                pg.evaluate(
+                    "()=>{const it=[...document.querySelectorAll("
+                    "'li,div[role=button],button,span,div')].find(e=>"
+                    "/^document/i.test((e.innerText||'').trim()));if(it)it.click();}")
+            fc.value.set_files(filepath)
+            uploaded = True
+        except Exception:
+            try:
+                inputs = pg.query_selector_all('input[type="file"]')
+                target = None
+                for inp in inputs:
+                    acc = (inp.get_attribute("accept") or "")
+                    if acc == "" or "*" in acc or "application" in acc:
+                        target = inp
+                        break
+                target = target or (inputs[-1] if inputs else None)
+                if target:
+                    target.set_input_files(filepath)
+                    uploaded = True
+            except Exception as e:
+                return {"ok": False, "error": f"upload fail: {str(e)[:120]}"}
+        if not uploaded:
+            return {"ok": False, "error": "file attach nahi ho paya"}
+        pg.wait_for_timeout(3500)
+        sent = pg.evaluate(
+            "()=>{const s=document.querySelector('span[data-icon=\"send\"]')"
+            "||document.querySelector('span[data-icon=\"wds-ic-send-filled\"]')"
+            "||document.querySelector('div[role=button][aria-label=\"Send\"]');"
+            "if(s){(s.closest('div[role=button]')||s.closest('button')||s).click();return true;}"
+            "return false;}")
+        if not sent:
+            try:
+                pg.keyboard.press("Enter")
+            except Exception:
+                pass
+        pg.wait_for_timeout(2500)
+        out = pg.evaluate("()=>document.querySelectorAll('#main .message-out').length")
+        return {"ok": True, "out_messages": out, "send_clicked": bool(sent)}
+
     # ---------------- public (thread-hopping) ----------------
+    def wa_send_file(self, contact: str, filepath: str) -> dict:
+        """CDP se user ke Chrome ki WhatsApp pe file bhejo (logged-in session)."""
+        e = self._run(self._ensure_impl, "https://web.whatsapp.com")
+        if not e.get("ok"):
+            return e
+        return self._run(self._wa_send_file_impl, contact, filepath)
+
     def ensure(self, restore_url: str | None = None) -> dict:
         return self._run(self._ensure_impl, restore_url)
 

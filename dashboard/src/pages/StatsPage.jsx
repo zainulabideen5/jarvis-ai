@@ -19,7 +19,7 @@ export default function StatsPage() {
       {/* Main grid */}
       <div className="grid grid-cols-12 gap-5 relative">
         <div className="col-span-3 flex flex-col gap-5">
-          <CameraPanel />
+          <AgentsHudPanel />
           <HeadlinesPanel stats={stats} />
         </div>
 
@@ -33,7 +33,131 @@ export default function StatsPage() {
           <SpherePanel stats={stats} />
         </div>
       </div>
+
     </div>
+  );
+}
+
+/* ===== Sub Agents (live multi-agent) — VIP panel ===== */
+const AGENT_ST = {
+  queued: { c: '#ff8a1f', l: 'QUEUED', icon: '◷' },
+  running: { c: '#22d3ee', l: 'PROCESSING', icon: '⚡' },
+  completed: { c: '#10b981', l: 'DONE', icon: '✓' },
+  failed: { c: '#ef4444', l: 'FAILED', icon: '✕' },
+};
+
+function agoLabel(ts) {
+  if (!ts) return '';
+  const t = new Date(String(ts).replace(' ', 'T') + 'Z').getTime();
+  if (isNaN(t)) return '';
+  const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s / 60) + 'm';
+  return Math.floor(s / 3600) + 'h';
+}
+
+function AgentsHudPanel() {
+  const fetchJobs = useCallback(() => api.getAgentJobs(30), []);
+  const { data, refresh } = usePolling(fetchJobs, 2000);
+  const jobs = (data && data.jobs) || [];
+  const active = jobs.filter((j) => j.status === 'running' || j.status === 'queued').length;
+  const del = async (id) => {
+    try { await api.deleteAgentJob(id); refresh(); } catch (e) { /* ignore */ }
+  };
+
+  return (
+    <Panel glow className="p-4 flex flex-col min-h-[260px]" label="SUB AGENTS" id={`${active} ACTIVE`}>
+      <style>{`@keyframes wkShimHud{0%{background-position:-200% 0}100%{background-position:200% 0}}`}</style>
+      <div className="flex items-center justify-between mb-3 mt-2">
+        <div className="flex items-center gap-2">
+          <h3 className="font-display text-xs uppercase tracking-widest j-glow"
+              style={{ color: 'var(--cyan-bright)' }}>
+            Sub Agents
+          </h3>
+          <span className="font-mono text-[9px] px-2 py-0.5 rounded-full"
+            style={{
+              color: active > 0 ? '#10b981' : 'var(--text-dim)',
+              background: active > 0 ? 'rgba(16,185,129,0.12)' : 'rgba(255,255,255,0.04)',
+              border: `1px solid ${active > 0 ? 'rgba(16,185,129,0.4)' : 'var(--border)'}`,
+            }}>
+            {active} active
+          </span>
+        </div>
+        <span className={`j-dot ${active > 0 ? 'j-dot-green' : 'j-dot-on'}`} />
+      </div>
+
+      {jobs.length === 0 ? (
+        <div className="flex-1 flex flex-col items-center justify-center text-center py-6">
+          <div className="text-2xl mb-2" style={{ opacity: 0.5 }}>🤖</div>
+          <p className="font-mono text-[10px]" style={{ color: 'var(--text-dim)' }}>No agents yet</p>
+          <p className="font-mono text-[9px] mt-1" style={{ color: 'var(--text-muted)' }}>
+            Chat mein kaam do
+          </p>
+        </div>
+      ) : (
+        <div className="flex-1 overflow-y-auto pr-1 space-y-2" style={{ maxHeight: 440 }}>
+          {jobs.map((j) => {
+            const s = AGENT_ST[j.status] || AGENT_ST.queued;
+            const run = j.status === 'running';
+            return (
+              <div key={j.job_id} className="rounded-xl p-2.5 j-hover-lift transition-all relative"
+                style={{
+                  background: 'rgba(0,0,0,0.3)',
+                  border: `1px solid ${run ? s.c : 'var(--border)'}`,
+                  boxShadow: run ? `0 0 14px ${s.c}33` : 'none',
+                }}>
+                <button onClick={() => del(j.job_id)} title="Remove"
+                  className="absolute top-1.5 right-1.5 rounded flex items-center justify-center transition-all"
+                  style={{ width: 18, height: 18, fontSize: 10, lineHeight: 1,
+                    color: 'var(--text-dim)', background: 'rgba(255,255,255,0.05)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444'; e.currentTarget.style.background = 'rgba(239,68,68,0.15)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-dim)'; e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; }}>
+                  ✕
+                </button>
+                <div className="flex gap-2.5 pr-4">
+                  <div className="shrink-0 rounded-lg flex items-center justify-center"
+                    style={{ width: 30, height: 30, background: `${s.c}1a`,
+                      border: `1px solid ${s.c}55`, color: s.c, fontSize: 13 }}>
+                    {s.icon}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start gap-1.5">
+                      <span className="mt-1 rounded-full shrink-0" style={{ width: 7, height: 7,
+                        background: s.c, boxShadow: `0 0 6px ${s.c}`,
+                        animation: run ? 'jPulse 1.2s infinite' : 'none' }} />
+                      <p className="text-[11.5px] font-semibold leading-snug" style={{ color: 'var(--text)',
+                        display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                        {j.task}
+                      </p>
+                    </div>
+                    <div className="flex items-center justify-between mt-1.5">
+                      <span className="font-display text-[9px] uppercase tracking-wider" style={{ color: s.c }}>
+                        {s.icon} {s.l}
+                      </span>
+                      <span className="font-mono text-[9px]" style={{ color: 'var(--text-dim)' }}>
+                        {agoLabel(j.created_at)}
+                      </span>
+                    </div>
+                    {(j.result || j.error) && (
+                      <p className="text-[9.5px] mt-1 break-words" style={{
+                        color: j.error ? 'rgba(239,68,68,0.8)' : 'rgba(16,185,129,0.8)',
+                        display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                        {j.error ? '⚠ ' + j.error : '✓ ' + j.result}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                {run && (
+                  <div className="mt-2" style={{ height: 2, borderRadius: 2,
+                    background: `linear-gradient(90deg,transparent,${s.c},transparent)`,
+                    backgroundSize: '200% 100%', animation: 'wkShimHud 1.3s linear infinite' }} />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Panel>
   );
 }
 

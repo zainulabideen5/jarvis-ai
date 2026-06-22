@@ -93,7 +93,7 @@ export const api = {
   stopListening: () => postJSON('/listening/off', {}),
 
   // Meeting
-  startMeeting: (title) => postJSON('/meeting/start', { title }),
+  startMeeting: (title, client_id) => postJSON('/meeting/start', { title, client_id }),
   endMeeting: () => postJSON('/meeting/end', {}),
   getActiveMeeting: () => fetchJSON('/meeting/active'),
   getMeetings: () => fetchJSON('/meetings'),
@@ -168,4 +168,9 @@ export const api = {
   // Agents
   getAgents: () => fetchJSON('/agents'),
   stopAgent: (agentId) => postJSON(`/agents/${agentId}/stop`, {}),
+
+  // Multi-agent task system (background workers spawned per command)
+  getAgentJobs: (limit = 50) => fetchJSON(`/agent-jobs?limit=${limit}`),
+  spawnAgentJob: (task) => postJSON('/agent-jobs', { task }),
+  deleteAgentJob: (jobId) => deleteJSON(`/agent-jobs/${jobId}`),
 };

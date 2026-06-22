@@ -13,6 +13,7 @@ import CalendarPage from './pages/CalendarPage';
 import ChunksPage from './pages/ChunksPage';
 import ClientsPage from './pages/ClientsPage';
 import AgentsPage from './pages/AgentsPage';
+import WorkersPage from './pages/WorkersPage';
 import SettingsPage from './pages/SettingsPage';
 import { api } from './api';
 
@@ -28,6 +29,7 @@ const PAGES = {
   rules: RulesPage,
   chunks: ChunksPage,
   agents: AgentsPage,
+  workers: WorkersPage,
   settings: SettingsPage,
 };
 

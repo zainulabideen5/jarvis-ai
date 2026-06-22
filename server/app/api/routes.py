@@ -517,6 +517,81 @@ async def stop_listening(db: AsyncSession = Depends(get_db)):
     return {"listening": "off"}
 
 
+@router.post("/agent-jobs")
+async def agent_job_spawn(payload: dict):
+    """Naya background task-AGENT banao (parallel chalega). Body: {"task": "..."}.
+    Foran job-id return (block nahi) — agent peeche kaam karta rahega."""
+    from app.services.agent_manager import AgentManager
+    task = (payload.get("task") or "").strip()
+    if not task:
+        return {"ok": False, "error": "task chahiye"}
+    return await AgentManager.get().spawn(task)
+
+
+@router.get("/agent-jobs")
+async def agent_jobs_list(limit: int = 50):
+    """Saare task-agents + unka live status (queued/running/completed/failed)."""
+    from app.services.agent_manager import AgentManager
+    return {"jobs": await AgentManager.get().list_jobs(limit)}
+
+
+@router.get("/agent-jobs/{job_id}")
+async def agent_job_get(job_id: str):
+    """Ek agent ka status/result."""
+    from app.services.agent_manager import AgentManager
+    job = await AgentManager.get().get_job(job_id)
+    if not job:
+        return {"ok": False, "error": "job nahi mili"}
+    return job
+
+
+@router.delete("/agent-jobs/{job_id}")
+async def agent_job_delete(job_id: str):
+    """User ne ✕ dabaya — yeh agent panel se hatao (manual only)."""
+    from app.services.agent_manager import AgentManager
+    return await AgentManager.get().delete_job(job_id)
+
+
+@router.post("/web/eval")
+async def web_eval_direct(payload: dict):
+    """JARVIS browser ki current page pe JS DIRECT chalao (brain ke baghair, fast).
+    Debugging/diagnostics ke liye — WhatsApp/koi bhi site ka live DOM turant dekho."""
+    from app.services.web_browser import WebBrowser
+    import asyncio as _a
+    js = payload.get("js", "")
+    if not js:
+        return {"ok": False, "error": "js chahiye"}
+    res = await _a.to_thread(WebBrowser.get().eval_js, js)
+    return res
+
+
+@router.post("/web/click")
+async def web_click_direct(payload: dict):
+    """JARVIS browser pe REAL (Playwright) click — CSS selector ya visible text.
+    JS .click() React buttons pe nahi chalta; yeh asli mouse-event bhejta hai."""
+    from app.services.web_browser import WebBrowser
+    import asyncio as _a
+    target = payload.get("target", "")
+    if not target:
+        return {"ok": False, "error": "target chahiye"}
+    return await _a.to_thread(WebBrowser.get().click, target)
+
+
+@router.post("/web/close")
+async def web_close():
+    """JARVIS ke Playwright browser ko CLEANLY band karo — taake logged-in
+    sessions (WhatsApp/Gmail/koi bhi site) IndexedDB/disk pe flush ho jayein aur
+    server restart ke baad bhi LOGGED-IN rahein. Start script restart se pehle
+    isay call karta hai (hard-kill se pehle), warna session udh jaata hai."""
+    from app.services.web_browser import WebBrowser
+    import asyncio as _a
+    try:
+        res = await _a.to_thread(WebBrowser.get().close)
+        return {"ok": True, "result": res}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
 class ChatMessage(BaseModel):
     message: str
     confirm_token: str | None = None
@@ -741,10 +816,20 @@ def _get_meeting():
 
 @router.post("/meeting/start")
 async def start_meeting(body: dict | None = None):
-    """Start a meeting — turns on listening + tracking."""
+    """Start a meeting — turns on listening + tracking.
+
+    Optional body: {"title": "...", "client_id": <int>}. If client_id is given
+    the meeting + its tasks are tagged to that client. If omitted, the client
+    is auto-detected from the conversation at meeting end.
+    """
     body = body or {}
     service = _get_meeting()
-    return await service.start_meeting(body.get("title", ""))
+    cid = body.get("client_id")
+    try:
+        cid = int(cid) if cid is not None else None
+    except (TypeError, ValueError):
+        cid = None
+    return await service.start_meeting(body.get("title", ""), client_id=cid)
 
 
 @router.post("/meeting/end")

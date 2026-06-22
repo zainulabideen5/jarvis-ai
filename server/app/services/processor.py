@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.core.config import ServerConfig
 from app.core.database import async_session
@@ -145,11 +145,27 @@ class ChunkProcessor:
             language=result["language"],
         )
 
+        # During an ACTIVE meeting, skip per-chunk task extraction entirely —
+        # the MeetingService's 5-min windowed loop handles tasks (batched,
+        # consolidated at end). Per-chunk extraction here would duplicate that
+        # work, spam the LLM (~480 calls for a 4hr meeting), and surface raw
+        # fragmented tasks on the dashboard mid-meeting (user wants them only
+        # at meeting end). We still transcribe + save every chunk above.
+        meeting_active = False
+        try:
+            async with async_session() as db:
+                mres = await db.execute(
+                    text("SELECT 1 FROM meetings WHERE status = 'active' LIMIT 1")
+                )
+                meeting_active = mres.fetchone() is not None
+        except Exception:
+            meeting_active = False
+
         # Extract tasks only if there's meaningful text (>40 chars filters out
         # short garbage that the garbage-detector lets through). Raising this
         # threshold prevents hallucinated tasks from noisy chunks like
         # "Adiky aski, we can not stop you..." that aren't real conversation.
-        if text and len(text.strip()) > 40:
+        if text and len(text.strip()) > 40 and not meeting_active:
             try:
                 window_ctx = f"{chunk.active_window} - {chunk.active_window_title}"
                 tasks = await asyncio.to_thread(

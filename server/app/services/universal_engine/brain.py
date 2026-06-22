@@ -118,6 +118,12 @@ class ClaudeCLIBrain:
         raw = (proc.stdout or "").strip()
         try:
             payload = json.loads(raw)
+            # CLI exit 0 but API/quota error (e.g. 429 "out of extra usage") →
+            # treat as failure so the fallback brain takes over.
+            if payload.get("is_error") or payload.get("api_error_status"):
+                msg = (payload.get("result") or payload.get("api_error_status")
+                       or "unknown error")
+                raise BrainError(f"Claude CLI API error: {str(msg)[:200]}")
             result = payload.get("result", "")
         except json.JSONDecodeError:
             # CLI printed plain text (older versions / config differences)
@@ -178,6 +184,64 @@ class LLMBrain:
             raise BrainError("LLM ne khali jawab diya")
         return text
 
+    # Plain-prose answer — chat replies/web-synthesis. LLMBrain ke liye think aur
+    # ask same hain (format system prompt se aata hai, koi JSON forcing nahi).
+    def ask(self, system: str, transcript: list[dict]) -> str:
+        return self.think(system, transcript)
+
+
+class FallbackBrain:
+    """Claude CLI PRIMARY (smartest); runtime pe woh fail/429/timeout ho to
+    SILENTLY Groq/Cerebras/Gemini stack pe gir jaata hai — taake brain ka quota
+    khatam hone par bhi JARVIS chalta rahe. Policy: Claude primary, baqi backup.
+    """
+
+    def __init__(self) -> None:
+        self._primary = ClaudeCLIBrain(model="opus")
+        self._backup = None          # lazy init (key na ho to None)
+        self._backup_tried = False
+
+    def _get_backup(self):
+        if not self._backup_tried:
+            self._backup_tried = True
+            try:
+                b = LLMBrain()
+                self._backup = b if b.is_available() else None
+            except Exception as e:
+                log.warning("backup_brain_init_fail", error=str(e)[:150])
+                self._backup = None
+        return self._backup
+
+    def is_available(self) -> bool:
+        if self._primary.is_available():
+            return True
+        b = self._get_backup()
+        return bool(b and b.is_available())
+
+    def _call(self, method: str, system: str, transcript: list[dict]) -> str:
+        # 1) Primary: Claude CLI (agar installed)
+        if self._primary.is_available():
+            try:
+                return getattr(self._primary, method)(system, transcript)
+            except BrainError as e:
+                log.warning("brain_primary_failed_fallback",
+                            method=method, error=str(e)[:200])
+        # 2) Backup: Groq/Cerebras/Gemini stack
+        b = self._get_backup()
+        if b and b.is_available():
+            fn = getattr(b, method, None) or b.think
+            return fn(system, transcript)
+        raise BrainError(
+            "Claude CLI fail (quota/429?) aur koi backup LLM key configured nahi. "
+            "Backup ke liye .env mein GROQ/CEREBRAS/GEMINI key daalo."
+        )
+
+    def think(self, system: str, transcript: list[dict]) -> str:
+        return self._call("think", system, transcript)
+
+    def ask(self, system: str, transcript: list[dict]) -> str:
+        return self._call("ask", system, transcript)
+
 
 # Which brain to use. Flip this one line to switch — nothing else changes.
 #   "cli"  → Claude CLI (Opus 4.8): smartest, but ~10-15s/step cold start
@@ -193,9 +257,9 @@ def get_brain():
     global _brain
     if _brain is None:
         if BRAIN_CHOICE == "cli":
-            cli = ClaudeCLIBrain(model="opus")
-            # Fall back to Groq only if the CLI isn't installed.
-            _brain = cli if cli.is_available() else LLMBrain()
+            # Claude CLI primary + automatic Groq/Cerebras backup on runtime
+            # failure (429/quota/timeout) — not just when CLI is missing.
+            _brain = FallbackBrain()
         else:
             llm = LLMBrain()
             _brain = llm if llm.is_available() else ClaudeCLIBrain(model="opus")

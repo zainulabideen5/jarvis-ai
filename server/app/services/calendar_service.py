@@ -52,36 +52,73 @@ class CalendarService:
         return self._client
 
     def extract_events(self, transcript: str) -> list[dict]:
-        """Extract calendar events from transcript text."""
+        """Extract calendar events. Claude CLI PRIMARY, Groq silent fallback."""
         if not transcript or len(transcript.strip()) < 15:
             return []
 
-        client = self._get_client()
         today = datetime.now().strftime("%Y-%m-%d")
         prompt = DATE_EXTRACT_PROMPT.replace("__TODAY__", today).replace("{transcript}", transcript)
 
+        # ----- PRIMARY: Claude CLI -----
         try:
+            from app.services.universal_engine.brain import ClaudeCLIBrain
+            brain = ClaudeCLIBrain(model="opus")
+            if brain.is_available():
+                result = brain.ask(
+                    "Tu calendar events extract karta hai. SIRF valid JSON array return kar.",
+                    [{"role": "user", "content": prompt}],
+                )
+                events = self._parse_events(result)
+                if events is not None:
+                    log.info("calendar_events_extracted_via_claude", count=len(events))
+                    return events
+        except Exception as e:
+            log.debug("claude_calendar_failed_falling_to_groq", error=str(e)[:120])
+
+        # ----- FALLBACK: Groq (silent background) -----
+        try:
+            client = self._get_client()
             response = client.chat.completions.create(
                 model=self._config.groq_model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
                 max_tokens=1000,
             )
-
             content = response.choices[0].message.content.strip()
-            if content.startswith("```"):
-                content = content.split("\n", 1)[1].rsplit("```", 1)[0]
-
-            events = json.loads(content)
-            if not isinstance(events, list):
-                events = [events]
-
-            log.info("calendar_events_extracted", count=len(events))
-            return events
-
-        except (json.JSONDecodeError, Exception) as e:
+            events = self._parse_events(content)
+            if events is not None:
+                log.info("calendar_events_extracted_via_groq", count=len(events))
+                return events
+            return []
+        except Exception as e:
             log.debug("calendar_extraction_failed", error=str(e))
             return []
+
+    @staticmethod
+    def _parse_events(content: str) -> list[dict] | None:
+        """Parse events JSON from an LLM response. None on parse failure."""
+        if not content:
+            return None
+        content = content.strip()
+        if content.startswith("```"):
+            try:
+                content = content.split("\n", 1)[1].rsplit("```", 1)[0]
+            except Exception:
+                pass
+        try:
+            events = json.loads(content)
+        except json.JSONDecodeError:
+            import re as _re
+            m = _re.search(r"\[.*\]", content, _re.DOTALL)
+            if not m:
+                return None
+            try:
+                events = json.loads(m.group())
+            except json.JSONDecodeError:
+                return None
+        if not isinstance(events, list):
+            events = [events]
+        return [e for e in events if isinstance(e, dict)]
 
     async def save_event(self, event: dict, chunk_id: str | None = None) -> int:
         """Save a calendar event to database."""

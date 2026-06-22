@@ -157,7 +157,16 @@ Write-Host ""
 # Stop first if -Force
 if ($Force) {
     Write-Host "Stopping existing services..."
-    if ($selected -contains $svcServer)    { Stop-OnPort 8000 "Server" }
+    if ($selected -contains $svcServer) {
+        # Hard-kill se PEHLE browser ko clean-close karwao taake logged-in
+        # sessions (WhatsApp/Gmail/etc.) disk pe flush ho jayein — warna restart
+        # par session udh jaata hai (WhatsApp baar-baar logout ka asal sabab).
+        try {
+            Invoke-RestMethod -Uri 'http://localhost:8000/api/web/close' -Method Post -TimeoutSec 10 -ErrorAction Stop | Out-Null
+            Write-Host "  Browser session flushed (clean close)"
+        } catch {}
+        Stop-OnPort 8000 "Server"
+    }
     if ($selected -contains $svcDashboard) { Stop-OnPort 3000 "Dashboard" }
     if ($selected -contains $svcAgent)     { Stop-Agent }
     Start-Sleep -Seconds 2

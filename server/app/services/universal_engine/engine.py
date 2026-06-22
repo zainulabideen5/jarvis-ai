@@ -17,7 +17,7 @@ from app.services.universal_engine.tools import TOOLS, TOOLS_DOC
 
 log = get_logger(__name__)
 
-MAX_STEPS = 15
+MAX_STEPS = 25
 
 # A sent file shows up as an attachment in the chat with text like
 # "...has an attachment". A typed filename does NOT — so verifying this string

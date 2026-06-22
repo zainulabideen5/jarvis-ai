@@ -38,11 +38,17 @@ JSON array:"""
 
 
 class TaskExtractor:
-    """Extracts tasks from transcriptions using Groq LLM."""
+    """Extracts tasks from transcriptions.
+
+    Brain policy: Claude CLI (Opus) is PRIMARY — best quality + currently no
+    per-use API cost via the local CLI. Groq is the silent background fallback
+    when Claude CLI is unavailable or errors.
+    """
 
     def __init__(self, config: ServerConfig):
         self._config = config
         self._client = None
+        self._claude = None
 
     def _get_client(self) -> LLMClient:
         if self._client is None:
@@ -50,6 +56,37 @@ class TaskExtractor:
                 raise ValueError("JARVIS_GROQ_API_KEY not set")
             self._client = LLMClient(self._config)
         return self._client
+
+    def _get_claude(self):
+        """Lazy-init the Claude CLI brain. Returns None if CLI not installed."""
+        if self._claude is None:
+            try:
+                from app.services.universal_engine.brain import ClaudeCLIBrain
+                brain = ClaudeCLIBrain(model="opus")
+                self._claude = brain if brain.is_available() else False
+            except Exception as e:
+                log.debug("claude_brain_init_failed", error=str(e)[:120])
+                self._claude = False
+        return self._claude or None
+
+    def _extract_via_claude(self, prompt: str) -> list[dict] | None:
+        """Try task extraction via Claude CLI. Returns list, or None on failure
+        (so caller falls back to Groq)."""
+        brain = self._get_claude()
+        if brain is None:
+            return None
+        try:
+            system = (
+                "Tu ek task extraction AI hai. SIRF ek valid JSON array return kar "
+                "(koi aur text, koi markdown nahi). Agar koi task na ho to []."
+            )
+            result = brain.ask(system, [{"role": "user", "content": prompt}])
+            tasks = self._parse_json(result)
+            log.info("tasks_extracted_via_claude", count=len(tasks))
+            return tasks
+        except Exception as e:
+            log.warning("claude_task_extraction_failed_falling_to_groq", error=str(e)[:160])
+            return None
 
     # Phrases that indicate a transcript is Whisper noise / prompt leak rather
     # than real meeting content. If a chunk's transcript matches, we skip
@@ -86,14 +123,20 @@ class TaskExtractor:
             log.debug("task_extraction_skipped_noise", text=transcript[:60])
             return []
 
-        client = self._get_client()
         prompt = EXTRACTION_PROMPT.replace(
             "__TRANSCRIPT__", transcript[:2000]
         ).replace(
             "__WINDOW__", window_context or "Unknown"
         )
 
+        # ----- PRIMARY: Claude CLI (Opus) — best quality, no per-use cost -----
+        claude_tasks = self._extract_via_claude(prompt)
+        if claude_tasks is not None:
+            return claude_tasks
+
+        # ----- FALLBACK: Groq (silent background) -----
         try:
+            client = self._get_client()
             response = client.chat.completions.create(
                 model=self._config.groq_model,
                 messages=[{"role": "user", "content": prompt}],
@@ -105,7 +148,7 @@ class TaskExtractor:
             tasks = self._parse_json(content)
 
             if tasks:
-                log.info("tasks_extracted", count=len(tasks))
+                log.info("tasks_extracted_via_groq", count=len(tasks))
             return tasks
 
         except Exception as e:

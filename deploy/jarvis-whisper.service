@@ -1,0 +1,20 @@
+[Unit]
+Description=JARVIS Whisper Service (faster-whisper, self-hosted)
+After=network.target
+
+[Service]
+Type=simple
+User=claude
+WorkingDirectory=/home/claude
+Environment=WHISPER_MODEL=small
+Environment=WHISPER_TOKEN=MotXv5zihmNbWxsIVQfg0CpYDw1S32kAGFulZe7T
+Environment=WHISPER_DEVICE=cpu
+Environment=WHISPER_COMPUTE=int8
+Environment=HF_HOME=/home/claude/.cache/huggingface
+ExecStart=/home/claude/whisper-venv/bin/uvicorn whisper_service:app --host 0.0.0.0 --port 8771
+Restart=always
+RestartSec=5
+MemoryMax=5G
+
+[Install]
+WantedBy=multi-user.target

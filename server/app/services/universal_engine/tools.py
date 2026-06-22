@@ -420,6 +420,15 @@ def web_login(url: str) -> dict:
     return WebBrowser.get().login(url)
 
 
+def web_upload(trigger: str, file: str) -> dict:
+    """Khuli web-app mein FILE/attachment bhejo — GENERAL, koi bhi app (WhatsApp Web,
+    Teams, Gmail, Drive, koi bhi site). Browser ka native file-chooser khud handle
+    hota hai. trigger = attach/upload/clip button ka TEXT ya CSS selector (ya seedha
+    input[type=file] selector); file = poora file path. Background mein chalta hai."""
+    from app.services.web_browser import WebBrowser
+    return WebBrowser.get().upload_file(trigger, file)
+
+
 def _re_escape(s: str) -> str:
     import re
     return re.escape(s or "")
@@ -577,6 +586,7 @@ TOOLS = {
     "web_eval": web_eval,
     "web_press": web_press,
     "web_login": web_login,
+    "web_upload": web_upload,
     "powershell": powershell,
     "find_files": find_files,
     "screenshot_check": screenshot_check,
@@ -607,6 +617,7 @@ TOOLS_DOC = """
 - web_eval {"js": "..."} — page mein KOI BHI JS chala kar result lo (SABSE taqatwar — jo bhi webpage pe mumkin hai sab: React dropdown set, scroll/hover, koi field set, menu/prices structured nikalna). Misal: "JSON.stringify([...document.querySelectorAll('.item')].map(e=>e.innerText))"
 - web_press {"key": "Enter", "selector": "?"} — key dabao (search submit ke liye Enter). selector do to us field mein
 - web_login {"url": "..."} — site VISIBLE kholo taake user ek dafa LOGIN kar le (phir background mein bhi logged-in). Sirf jab login zaroori ho.
+- web_upload {"trigger": "...", "file": "C:\\...\\file.pdf"} — khuli web-app mein FILE/attachment bhejo. GENERAL, KISI BHI app pe (WhatsApp Web, Teams, Gmail, koi bhi). trigger = attach/clip/upload button ka TEXT ya CSS selector (ya input[type=file] selector). File bhejne ka tareeqa: web_open app → contact/chat kholo → (zaroorat ho to) attach menu kholo → web_upload se file daalo → web_click/web_press se SEND. Background mein chalta hai.
 - create_file {"path":"...","content":"..."} — nayi text file banao (UNDOABLE)
 - create_excel {"path":"...","data":[["Name","Age"],["Zain","25"]],"sheet_name":"Sheet1"} — Excel (.xlsx) SEEDHE banao, Excel khole BAGHAIR (BACKGROUND). data = rows ki list (list-of-lists, ya list-of-dicts jisme keys=columns). Spreadsheet/table/data ke liye YEH use karo — Excel GUI nahi (UNDOABLE)
 - create_folder {"path":"..."} — naya folder banao (UNDOABLE)

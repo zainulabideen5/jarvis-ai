@@ -9,7 +9,8 @@ const NAV = [
   { id: 'clients', label: 'Clients', icon: 'U' },
   { id: 'rules', label: 'Rules', icon: 'R' },
   { id: 'chunks', label: 'Chunks', icon: 'H' },
-  { id: 'agents', label: 'Agents', icon: 'G' },
+  { id: 'workers', label: 'Agents', icon: 'G' },
+  { id: 'agents', label: 'Devices', icon: 'U' },
   { id: 'settings', label: 'Settings', icon: 'S' },
 ];
 

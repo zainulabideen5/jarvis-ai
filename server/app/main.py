@@ -58,6 +58,14 @@ async def lifespan(app: FastAPI):
     from app.services.universal_engine.recipes import RecipeStore
     RecipeStore.ensure_table()
 
+    # Multi-agent: restart se pehle ke adhoore (running/queued) agents ko failed
+    # mark kar do (process mar chuka) — taake dashboard mein hamesha-running na rahein.
+    try:
+        from app.services.agent_manager import AgentManager
+        await AgentManager.cleanup_stale()
+    except Exception as e:
+        log.warning("agent_cleanup_failed", error=str(e))
+
     # Detect + cache the runtime environment (PC/laptop, OS, apps) so JARVIS
     # adapts per platform (PC → web/desktop, phone → app). Self-adaptive.
     try:
@@ -90,6 +98,26 @@ async def lifespan(app: FastAPI):
 
     notifier_task = asyncio.create_task(background_loop())
 
+    # JARVIS ka DEDICATED browser startup pe launch (visible) — user isme ek baar
+    # WhatsApp login kar le, phir JARVIS chat se background mein use karta hai.
+    # Login persistent profile mein bachta hai (clean-close se restart pe bhi).
+    # Non-blocking: alag daemon thread, startup ko block na kare.
+    def _launch_jarvis_browser():
+        try:
+            from app.services.web_browser import WebBrowser
+            # VISIBLE (headed) rakho taake user JARVIS chrome dekh sake (kaam hote
+            # hue), PAR foreground pe force nahi karte (focus nahi cheenta — bring_
+            # to_front/SetForegroundWindow nahi). Login persistent profile mein bacha
+            # rehta hai (clean-close). reuse-always: saare sends isi visible window
+            # mein hote hain.
+            WebBrowser.get().goto("https://web.whatsapp.com", headless=False)
+            log.info("jarvis_browser_launched_visible")
+        except Exception as e:
+            log.warning("jarvis_browser_launch_failed", error=str(e))
+
+    import threading
+    threading.Thread(target=_launch_jarvis_browser, daemon=True).start()
+
     log.info("jarvis_server_ready")
 
     yield
@@ -99,6 +127,13 @@ async def lifespan(app: FastAPI):
     processor_task.cancel()
     notifier_task.cancel()
     await asyncio.gather(processor_task, notifier_task, return_exceptions=True)
+    # Clean-close the web browser so logged-in sessions (WhatsApp/Gmail/etc.)
+    # flush to disk and survive a restart (graceful shutdowns only).
+    try:
+        from app.services.web_browser import WebBrowser
+        await asyncio.to_thread(WebBrowser.get().close)
+    except Exception as e:
+        log.warning("web_browser_close_failed", error=str(e))
     log.info("server_stopped")
 
 

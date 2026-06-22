@@ -45,6 +45,13 @@ class ServerConfig(BaseSettings):
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
 
+    # Cloud Whisper (self-hosted faster-whisper on GCP jarvis-vm) — PRIMARY STT.
+    # Zero per-transcription cost. Falls back to Groq Whisper if unreachable.
+    # Set whisper_cloud_url empty to disable cloud path entirely.
+    whisper_cloud_url: str = "http://34.30.83.141:8771/transcribe"
+    whisper_cloud_token: str = "MotXv5zihmNbWxsIVQfg0CpYDw1S32kAGFulZe7T"
+    whisper_cloud_timeout: float = 30.0
+
     # Groq
     groq_api_key: str = ""
     # 70b for chat quality — Roman Urdu nuances (e.g. "chai" = need vs tea)
