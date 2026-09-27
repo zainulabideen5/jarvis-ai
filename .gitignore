@@ -48,3 +48,6 @@ dashboard/dist/
 # Logs
 *.log
 logs/
+
+# Local tool files
+.claude/
